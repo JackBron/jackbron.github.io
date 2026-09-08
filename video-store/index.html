@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>The Late Fee — video store</title>
+<meta name="description" content="A retro video-store shelf for tracking films watched.">
+<meta name="color-scheme" content="dark">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Mono:wght@400;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./css/store.css?v=2">
+<link rel="icon" href="./favicon.svg">
+</head>
+<body>
+
+<div class="room">
+
+  <!-- ============ storefront sign ============ -->
+  <header class="marquee">
+    <div class="marquee__bulbs" aria-hidden="true"></div>
+    <div class="marquee__plate">
+      <h1 class="marquee__name">The Late Fee</h1>
+      <p class="marquee__sub">VIDEO &middot; MEMBERS ONLY &middot; BE KIND, REWIND</p>
+    </div>
+    <div class="marquee__bulbs" aria-hidden="true"></div>
+  </header>
+
+  <!-- ============ counter / controls ============ -->
+  <div class="counter">
+    <div class="counter__card">
+      <span class="counter__label">Member</span>
+      <strong class="counter__value" id="ownerName">&mdash;</strong>
+    </div>
+    <div class="counter__card">
+      <span class="counter__label">On the shelf</span>
+      <strong class="counter__value" id="statCount">0</strong>
+    </div>
+    <div class="counter__card">
+      <span class="counter__label">Avg rating</span>
+      <strong class="counter__value" id="statAvg">&mdash;</strong>
+    </div>
+
+    <div class="counter__spacer"></div>
+
+    <label class="field field--search">
+      <span class="sr-only">Filter shelf</span>
+      <input type="search" id="filter" placeholder="filter the shelf&hellip;" autocomplete="off">
+    </label>
+
+    <label class="field">
+      <span class="sr-only">Sort</span>
+      <select id="sort">
+        <option value="watched-desc">Recently watched</option>
+        <option value="watched-asc">Oldest watched</option>
+        <option value="rating-desc">Highest rated</option>
+        <option value="title-asc">Title A&ndash;Z</option>
+        <option value="year-desc">Newest film</option>
+      </select>
+    </label>
+
+    <button class="btn btn--primary" id="btnAdd">+ Add a title</button>
+    <button class="btn btn--ghost" id="btnSettings" aria-label="Shelf settings">&#9881;</button>
+  </div>
+
+  <!-- ============ the shelving ============ -->
+  <main class="shelving">
+    <div class="shelf" id="shelf" role="list" aria-label="Film shelf"></div>
+
+    <div class="shelf-empty" id="shelfEmpty" hidden>
+      <p class="shelf-empty__big">SHELF EMPTY</p>
+      <p>Nothing checked in yet. Add a film and it gets a case on the rack.</p>
+      <button class="btn btn--primary" data-act="add-first">+ Add your first title</button>
+    </div>
+  </main>
+
+  <footer class="fineprint">
+    <span id="providerNote"></span>
+    <span class="fineprint__rule"></span>
+    <a href="../">&larr; jackbron.github.io</a>
+  </footer>
+</div>
+
+<!-- ============ pulled-from-shelf detail ============ -->
+<div class="viewer" id="viewer" hidden>
+  <div class="viewer__scrim" data-act="close-viewer"></div>
+  <div class="viewer__stage" role="dialog" aria-modal="true" aria-labelledby="vTitle">
+    <button class="viewer__close" data-act="close-viewer" aria-label="Put it back">&#10005;</button>
+
+    <div class="viewer__case">
+      <div class="case3d" id="vCase3d">
+        <div class="case3d__front" id="vFront"></div>
+        <div class="case3d__edge"></div>
+      </div>
+    </div>
+
+    <div class="viewer__info">
+      <p class="viewer__format" id="vFormat">VHS</p>
+      <h2 id="vTitle">&mdash;</h2>
+      <p class="viewer__year" id="vYear"></p>
+
+      <dl class="rentalcard">
+        <div class="rentalcard__row">
+          <dt>Watched</dt>
+          <dd><span class="stamp" id="vWatched">&mdash;</span></dd>
+        </div>
+        <div class="rentalcard__row">
+          <dt>Rating</dt>
+          <dd><span class="stars" id="vStars"></span></dd>
+        </div>
+      </dl>
+
+      <p class="viewer__note" id="vNote"></p>
+
+      <div class="viewer__actions">
+        <button class="btn btn--ghost" data-act="edit">Edit</button>
+        <button class="btn btn--danger" data-act="delete">Remove</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ add / edit ============ -->
+<dialog class="sheet" id="sheet">
+  <form method="dialog" class="sheet__form" id="sheetForm">
+    <header class="sheet__head">
+      <h2 id="sheetTitle">Add a title</h2>
+      <button class="sheet__x" value="cancel" aria-label="Close">&#10005;</button>
+    </header>
+
+    <div class="sheet__body">
+
+      <section class="lookup">
+        <div class="field field--block">
+          <span class="field__label">Look it up</span>
+          <div class="lookup__bar">
+            <input type="search" id="q" placeholder="title, e.g. Repo Man" autocomplete="off">
+            <button type="button" class="btn btn--primary" id="btnSearch">Search</button>
+          </div>
+        </div>
+        <p class="lookup__hint" id="lookupHint"></p>
+        <div class="results" id="results"></div>
+      </section>
+
+      <div class="sheet__or"><span>or fill it in yourself</span></div>
+
+      <div class="grid2">
+        <label class="field field--block">
+          <span class="field__label">Title</span>
+          <input type="text" id="fTitle" required>
+        </label>
+        <label class="field field--block">
+          <span class="field__label">Year</span>
+          <input type="number" id="fYear" min="1888" max="2100" step="1" placeholder="1984">
+        </label>
+      </div>
+
+      <div class="grid2">
+        <label class="field field--block">
+          <span class="field__label">Watched on</span>
+          <input type="date" id="fWatched" required>
+        </label>
+        <div class="field field--block">
+          <span class="field__label">Your rating</span>
+          <div class="starpick" id="fStars" tabindex="0" role="slider"
+               aria-label="Rating out of 5" aria-valuemin="0" aria-valuemax="5" aria-valuenow="0"></div>
+        </div>
+      </div>
+
+      <fieldset class="field field--block formats">
+        <legend class="field__label">Format</legend>
+        <label class="fmt"><input type="radio" name="fmt" value="vhs" checked><span>VHS</span></label>
+        <label class="fmt"><input type="radio" name="fmt" value="dvd"><span>DVD</span></label>
+        <label class="fmt"><input type="radio" name="fmt" value="bluray"><span>Blu-ray</span></label>
+      </fieldset>
+
+      <div class="coverpick">
+        <div class="coverpick__preview" id="coverPreview"><span>no art</span></div>
+        <div class="coverpick__side">
+          <span class="field__label">Cover art</span>
+          <input type="file" id="fCover" accept="image/*" hidden>
+          <button type="button" class="btn btn--ghost" id="btnUpload">Upload an image&hellip;</button>
+          <button type="button" class="btn btn--ghost" id="btnClearCover">Clear</button>
+          <p class="coverpick__hint">Resized and stored on your device. JPG/PNG/WebP.</p>
+        </div>
+      </div>
+
+      <label class="field field--block">
+        <span class="field__label">Note <em>optional</em></span>
+        <textarea id="fNote" rows="2" placeholder="Watched at the drive-in. Held up."></textarea>
+      </label>
+    </div>
+
+    <footer class="sheet__foot">
+      <button class="btn btn--ghost" value="cancel" type="submit">Cancel</button>
+      <button class="btn btn--primary" value="save" type="submit">Shelve it</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- ============ settings ============ -->
+<dialog class="sheet sheet--narrow" id="settings">
+  <form method="dialog" class="sheet__form">
+    <header class="sheet__head">
+      <h2>Shelf settings</h2>
+      <button class="sheet__x" value="cancel" aria-label="Close">&#10005;</button>
+    </header>
+    <div class="sheet__body">
+      <label class="field field--block">
+        <span class="field__label">Your member name</span>
+        <input type="text" id="sOwner" placeholder="Jack" autocomplete="off">
+      </label>
+
+      <label class="field field--block">
+        <span class="field__label">Cover lookup</span>
+        <select id="sProvider">
+          <option value="none">Off &mdash; upload art by hand</option>
+          <option value="tmdb">TMDB</option>
+          <option value="omdb">OMDb</option>
+        </select>
+      </label>
+
+      <label class="field field--block" id="keyField">
+        <span class="field__label">API key</span>
+        <input type="password" id="sKey" placeholder="paste key" autocomplete="off">
+        <p class="coverpick__hint" id="keyHint"></p>
+      </label>
+
+      <div class="sheet__or"><span>your data</span></div>
+
+      <div class="datarow">
+        <button type="button" class="btn btn--ghost" id="btnExport">Export shelf (.json)</button>
+        <button type="button" class="btn btn--ghost" id="btnImport">Import&hellip;</button>
+        <input type="file" id="importFile" accept="application/json,.json" hidden>
+      </div>
+      <p class="coverpick__hint">
+        Everything lives in this browser only. Export is your backup &mdash; and the
+        same file shape the shelf will sync when other members can post to it.
+      </p>
+    </div>
+    <footer class="sheet__foot">
+      <button class="btn btn--primary" value="save" type="submit">Done</button>
+    </footer>
+  </form>
+</dialog>
+
+<div class="toast" id="toast" hidden></div>
+
+<script type="module" src="./js/app.js?v=2"></script>
+</body>
+</html>
