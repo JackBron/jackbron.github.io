@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Protoboard Studio</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%23146c43'/%3E%3Cg fill='%23ffd24a'%3E%3Ccircle cx='4.5' cy='4.5' r='1.4'/%3E%3Ccircle cx='11.5' cy='4.5' r='1.4'/%3E%3Ccircle cx='4.5' cy='11.5' r='1.4'/%3E%3Ccircle cx='11.5' cy='11.5' r='1.4'/%3E%3C/g%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<div id="app">
+
+  <!-- =========================  MENU BAR  ========================= -->
+  <header id="menubar">
+    <div class="brand"><span class="brand-mark"></span>Protoboard&nbsp;<b>Studio</b></div>
+
+    <nav class="menus">
+      <div class="menu" data-menu="file">
+        <button class="menu-btn">File</button>
+        <div class="menu-pop">
+          <button data-cmd="file.new">New project&hellip;<kbd>Ctrl N</kbd></button>
+          <button data-cmd="file.open">Open .pbstudio&hellip;<kbd>Ctrl O</kbd></button>
+          <button data-cmd="file.save">Save project<kbd>Ctrl S</kbd></button>
+          <hr>
+          <button data-cmd="file.importParts">Import part library&hellip;</button>
+          <button data-cmd="file.exportParts">Export part library&hellip;</button>
+          <hr>
+          <button data-cmd="export.svg">Export SVG&hellip;</button>
+          <button data-cmd="export.png">Export PNG&hellip;</button>
+          <button data-cmd="export.netlist">Export netlist (.net)&hellip;</button>
+          <button data-cmd="export.bom">Export BOM (.csv)&hellip;</button>
+          <button data-cmd="export.wirelist">Export wire cut-list (.csv)&hellip;</button>
+          <hr>
+          <button data-cmd="export.buildsheet">Assembly build sheet&hellip;<kbd>Ctrl P</kbd></button>
+        </div>
+      </div>
+
+      <div class="menu" data-menu="edit">
+        <button class="menu-btn">Edit</button>
+        <div class="menu-pop">
+          <button data-cmd="edit.undo">Undo<kbd>Ctrl Z</kbd></button>
+          <button data-cmd="edit.redo">Redo<kbd>Ctrl Y</kbd></button>
+          <hr>
+          <button data-cmd="edit.copy">Copy<kbd>Ctrl C</kbd></button>
+          <button data-cmd="edit.paste">Paste<kbd>Ctrl V</kbd></button>
+          <button data-cmd="edit.duplicate">Duplicate<kbd>Ctrl D</kbd></button>
+          <button data-cmd="edit.delete">Delete<kbd>Del</kbd></button>
+          <hr>
+          <button data-cmd="edit.selectAll">Select all<kbd>Ctrl A</kbd></button>
+          <button data-cmd="edit.selectNone">Deselect<kbd>Esc</kbd></button>
+          <hr>
+          <button data-cmd="edit.rotate">Rotate 90&deg;<kbd>R</kbd></button>
+          <button data-cmd="edit.mirror">Mirror<kbd>M</kbd></button>
+          <button data-cmd="edit.flipSide">Flip to other side<kbd>F</kbd></button>
+        </div>
+      </div>
+
+      <div class="menu" data-menu="view">
+        <button class="menu-btn">View</button>
+        <div class="menu-pop">
+          <button data-cmd="view.fit">Zoom to fit<kbd>Ctrl 0</kbd></button>
+          <button data-cmd="view.zoomIn">Zoom in<kbd>+</kbd></button>
+          <button data-cmd="view.zoomOut">Zoom out<kbd>-</kbd></button>
+          <hr>
+          <button data-cmd="view.side.front">Work on FRONT side<kbd>1</kbd></button>
+          <button data-cmd="view.side.back">Work on BACK side<kbd>2</kbd></button>
+          <button data-cmd="view.flipBoard">Flip board over (mirror view)<kbd>B</kbd></button>
+          <hr>
+          <button data-cmd="view.toggleLabels">Toggle designators<kbd>L</kbd></button>
+          <button data-cmd="view.toggleRulers">Toggle rulers</button>
+          <button data-cmd="view.toggleRats">Toggle ratsnest<kbd>N</kbd></button>
+          <button data-cmd="view.toggleHoleNums">Toggle hole numbers</button>
+        </div>
+      </div>
+
+      <div class="menu" data-menu="tools">
+        <button class="menu-btn">Tools</button>
+        <div class="menu-pop">
+          <button data-cmd="tools.partDesigner">Part Designer&hellip;</button>
+          <button data-cmd="tools.boardSetup">Board setup</button>
+          <hr>
+          <button data-cmd="tools.drc">Run design checks<kbd>Ctrl E</kbd></button>
+          <button data-cmd="tools.autoroute">Auto-route ratsnest</button>
+          <button data-cmd="tools.tidyWires">Re-flow right-angle wires</button>
+          <hr>
+          <button data-cmd="tools.resetLibrary">Reset part library to defaults</button>
+        </div>
+      </div>
+
+      <div class="menu" data-menu="help">
+        <button class="menu-btn">Help</button>
+        <div class="menu-pop">
+          <button data-cmd="help.shortcuts">Keyboard shortcuts&hellip;<kbd>?</kbd></button>
+          <button data-cmd="help.about">Quick start&hellip;</button>
+          <hr>
+          <button data-cmd="help.example">Load the example project</button>
+        </div>
+      </div>
+    </nav>
+
+    <div class="menubar-right">
+      <div class="side-switch" title="Which side of the board you are working on">
+        <button data-side="front" class="on">FRONT</button>
+        <button data-side="back">BACK</button>
+      </div>
+      <div class="opacity-ctl" title="See-through parts: route wires underneath breakout boards">
+        <span>See&#8209;through</span>
+        <input type="range" id="partOpacity" min="8" max="100" value="80">
+        <output id="partOpacityOut">80%</output>
+      </div>
+      <button class="ghost" data-cmd="file.save" title="Save project (Ctrl S)">Save</button>
+    </div>
+  </header>
+
+  <div id="body">
+
+    <!-- =========================  TOOLBAR  ========================= -->
+    <nav id="toolbar">
+      <button class="tool on" data-tool="select" title="Select / move&#10;(V)"><svg viewBox="0 0 24 24"><path d="M5 3l14 8-6 1.6L9.6 19z"/></svg><i>V</i></button>
+      <button class="tool" data-tool="pan" title="Pan&#10;(H, or hold Space / middle-drag)"><svg viewBox="0 0 24 24"><path d="M12 3v9M12 21v-4M3 12h9M21 12h-4M8 7l4-4 4 4M8 17l4 4 4-4M7 8l-4 4 4 4M17 8l4 4-4 4"/></svg><i>H</i></button>
+      <hr>
+      <button class="tool" data-tool="place" title="Place part from library&#10;(P)"><svg viewBox="0 0 24 24"><rect x="4" y="7.5" width="16" height="9" rx="1.5"/><path d="M7.5 7.5v-3M12 7.5v-3M16.5 7.5v-3M7.5 19.5v-3M12 19.5v-3M16.5 19.5v-3"/></svg><i>P</i></button>
+      <button class="tool" data-tool="wire" title="Draw jumper wire&#10;(W)"><svg viewBox="0 0 24 24"><path d="M4.5 18.5h5.5a3 3 0 003-3v-7a3 3 0 013-3h3.5"/><circle cx="4.5" cy="18.5" r="1.9"/><circle cx="19.5" cy="5.5" r="1.9"/></svg><i>W</i></button>
+      <button class="tool" data-tool="link" title="Ratsnest link: click pad A then pad B&#10;(Q)"><svg viewBox="0 0 24 24"><circle cx="5" cy="19" r="2.2"/><circle cx="19" cy="5" r="2.2"/><path d="M6.6 17.4L17.4 6.6" stroke-dasharray="3 2.5"/></svg><i>Q</i></button>
+      <hr>
+      <button class="tool" data-tool="cut" title="Track cut / drill (stripboard)&#10;(X)"><svg viewBox="0 0 24 24"><path d="M6 3.5l12 11M18 3.5l-12 11"/><circle cx="6.5" cy="19" r="2"/><circle cx="17.5" cy="19" r="2"/></svg><i>X</i></button>
+      <button class="tool" data-tool="holes" title="Add or remove board holes&#10;(O) — click or drag; click again to restore"><svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="1.5"/><circle cx="12" cy="6" r="1.5"/><circle cx="18" cy="6" r="1.5"/><circle cx="6" cy="12" r="1.5"/><circle cx="18" cy="12" r="1.5"/><circle cx="6" cy="18" r="1.5"/><circle cx="12" cy="18" r="1.5"/><circle cx="18" cy="18" r="1.5"/><path d="M10 10l4 4M14 10l-4 4"/></svg><i>O</i></button>
+      <button class="tool" data-tool="text" title="Annotation text&#10;(T)"><svg viewBox="0 0 24 24"><path d="M5 6h14M12 6v13"/></svg><i>T</i></button>
+      <button class="tool" data-tool="measure" title="Measure distance&#10;(D)"><svg viewBox="0 0 24 24"><path d="M3 15l12-12 6 6-12 12z"/><path d="M7.5 10.5l2 2M10.5 7.5l2 2M13.5 4.5l2 2"/></svg><i>D</i></button>
+      <button class="tool" data-tool="erase" title="Delete by clicking&#10;(E)"><svg viewBox="0 0 24 24"><path d="M4.5 16L14 6.5l5 5L9.5 21H7z"/><path d="M9 21h11"/></svg><i>E</i></button>
+      <div class="spring"></div>
+      <button class="tool tool-alt" data-cmd="view.fit" title="Zoom to fit (Ctrl 0)"><svg viewBox="0 0 24 24"><path d="M4 9.5V4h5.5M20 9.5V4h-5.5M4 14.5V20h5.5M20 14.5V20h-5.5"/></svg></button>
+      <button class="tool tool-alt" data-cmd="edit.undo" title="Undo (Ctrl Z)"><svg viewBox="0 0 24 24"><path d="M8.5 6.5L4 11l4.5 4.5"/><path d="M4 11h10.5a5.5 5.5 0 010 11H12"/></svg></button>
+      <button class="tool tool-alt" data-cmd="edit.redo" title="Redo (Ctrl Y)"><svg viewBox="0 0 24 24"><path d="M15.5 6.5L20 11l-4.5 4.5"/><path d="M20 11H9.5a5.5 5.5 0 000 11H12"/></svg></button>
+    </nav>
+
+    <!-- =========================  CANVAS  ========================= -->
+    <main id="canvas-wrap">
+      <svg id="stage" xmlns="http://www.w3.org/2000/svg"></svg>
+
+      <div id="ruler-top" class="ruler"></div>
+      <div id="ruler-left" class="ruler"></div>
+      <div id="ruler-corner"></div>
+
+      <div id="wire-optbar" class="floatbar" hidden>
+        <span class="fb-title">Wire</span>
+        <div class="seg" id="wireModeSeg">
+          <button data-mode="ortho" class="on" title="Right-angle (Manhattan) routing">Right angle</button>
+          <button data-mode="diag" title="45&deg; octilinear routing">45&deg;</button>
+          <button data-mode="free" title="Any angle, straight point-to-point">Any angle</button>
+        </div>
+        <span class="fb-sep"></span>
+        <span class="fb-field">Colour<span class="swatches" id="wireSwatches"></span></span>
+        <span class="fb-sep"></span>
+        <label class="fb-field">Gauge
+          <select id="wireGauge">
+            <option value="0.30">30 AWG</option>
+            <option value="0.40">26 AWG</option>
+            <option value="0.51" selected>24 AWG</option>
+            <option value="0.64">22 AWG</option>
+            <option value="0.81">20 AWG</option>
+            <option value="1.02">18 AWG</option>
+          </select>
+        </label>
+        <span class="fb-sep"></span>
+        <label class="fb-check"><input type="checkbox" id="wireAuto" checked> Auto&#8209;route</label>
+        <span class="fb-hint">click pad &rarr; pad &middot; <kbd>Tab</kbd> flip elbow &middot; <kbd>Alt</kbd> free move &middot; <kbd>Esc</kbd> cancel</span>
+      </div>
+
+      <div id="hud"></div>
+      <div id="toast-stack"></div>
+    </main>
+
+    <!-- =========================  INSPECTOR  ========================= -->
+    <aside id="inspector">
+      <div class="tabs" id="inspTabs">
+        <button data-tab="library" class="on">Library</button>
+        <button data-tab="props">Properties</button>
+        <button data-tab="board">Board</button>
+        <button data-tab="nets">Nets</button>
+        <button data-tab="checks">Checks</button>
+      </div>
+
+      <section class="tabpane on" data-pane="library">
+        <div class="pane-head">
+          <input type="search" id="libSearch" placeholder="Search parts&hellip;">
+          <button class="mini accent" data-cmd="tools.partDesigner" title="Create a new custom part">+ New</button>
+        </div>
+        <div id="libList" class="lib-list"></div>
+        <div class="pane-foot">
+          <button class="mini" data-cmd="file.importParts">Import&hellip;</button>
+          <button class="mini" data-cmd="file.exportParts">Export&hellip;</button>
+        </div>
+      </section>
+
+      <section class="tabpane" data-pane="props"><div id="propsBody" class="pad"></div></section>
+
+      <section class="tabpane" data-pane="board"><div id="boardBody" class="pad"></div></section>
+
+      <section class="tabpane" data-pane="nets">
+        <div class="pane-head">
+          <input type="search" id="netSearch" placeholder="Filter nets&hellip;">
+          <button class="mini" id="netAddBtn">+ Net</button>
+        </div>
+        <div id="netList" class="net-list"></div>
+      </section>
+
+      <section class="tabpane" data-pane="checks">
+        <div class="pane-head">
+          <button class="mini" data-cmd="tools.drc">Run checks</button>
+          <label class="fb-check"><input type="checkbox" id="drcLive" checked> Live</label>
+        </div>
+        <div id="drcList" class="drc-list"></div>
+      </section>
+    </aside>
+  </div>
+
+  <!-- =========================  STATUS BAR  ========================= -->
+  <footer id="statusbar">
+    <span id="st-tool" class="chip">Select</span>
+    <span id="st-coord" class="mono">&mdash;</span>
+    <span id="st-hover" class="mono dim"></span>
+    <div class="spring"></div>
+    <span id="st-msg" class="dim"></span>
+    <span id="st-stats" class="mono dim"></span>
+    <span id="st-zoom" class="mono">100%</span>
+  </footer>
+</div>
+
+<div id="modal-root" hidden></div>
+
+<script src="js/util.js"></script>
+<script src="js/model.js"></script>
+<script src="parts/builtin-parts.js"></script>
+<script src="js/parts.js"></script>
+<script src="js/board.js"></script>
+<script src="js/nets.js"></script>
+<script src="js/router.js"></script>
+<script src="js/view.js"></script>
+<script src="js/render.js"></script>
+<script src="js/tools.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/partdesigner.js"></script>
+<script src="js/io.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

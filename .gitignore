@@ -5,3 +5,7 @@
 # recipe JSONs and Recipe_PDFs are third-party recipe content and stay unpublished.
 # The deployed copy of the app is line-studio/index.html.
 Cooking_Mode/
+
+# Protoboard Studio working copy dropped in the repo root. The published copy
+# is protoboard-studio/ (see README); this one carries serve.bat and .claude/.
+Protoboard_Studio/

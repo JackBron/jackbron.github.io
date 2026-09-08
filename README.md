@@ -9,6 +9,7 @@ Static site served by GitHub Pages at <https://jackbron.github.io>.
 | `index.html` | Landing page / project index. Plain HTML, no build step, no dependencies. |
 | `line-studio/index.html` | Line Studio — single-file cooking-mode app. Deployed copy. |
 | `video-store/` | The Late Fee — film diary as a rental-store shelf. |
+| `protoboard-studio/` | Protoboard Studio — stripboard layout designer. Deployed copy. |
 
 Nothing here is built. Every page is hand-written HTML/CSS/JS served as-is, so
 editing a file and pushing is the whole deploy.
@@ -29,6 +30,19 @@ cp Cooking_Mode/line_studio_<rev>.html line-studio/index.html
 ```
 
 The revision string stays visible in the app's status bar, bottom right.
+
+## Updating Protoboard Studio
+
+Source of truth is the working copy at `Python Scripts/Protoboard_Studio`. The
+deployed copy is a straight file copy — every path in it is relative and the
+scripts are classic (non-module), so it runs unchanged from a subpath:
+
+```
+cp -r <source>/index.html <source>/css <source>/js <source>/parts protoboard-studio/
+```
+
+Its `localStorage` keys are all namespaced `pbstudio.*`, so they do not collide
+with the other apps now sharing the `jackbron.github.io` origin.
 
 ## The Late Fee (`video-store/`)
 
