@@ -368,16 +368,22 @@ input[type=date]::-webkit-calendar-picker-indicator{filter:invert(.7) sepia(1) s
 }
 
 /* the vertical title */
+/* In vertical-rl the block axis runs right-to-left, so `align-items` controls
+   the horizontal placement and `flex-start` would pin the text to the right
+   edge of the spine. `center` is what actually centres it in the width. */
 .case__title{
   position:absolute;
   left:0;right:0;
   top:26px;bottom:24px;
   writing-mode:vertical-rl;
   text-orientation:mixed;
-  display:flex;align-items:flex-start;justify-content:center;
-  font-family:var(--f-disp);
+  display:flex;align-items:center;justify-content:center;
+  /* both set per-film in caseEl(): a hashed typeface, and a size fitted to
+     the spine so a long title shrinks instead of getting clipped */
+  font-family:var(--title-font,var(--f-disp));
   font-size:var(--title-size,13px);
-  letter-spacing:.045em;
+  text-transform:uppercase;
+  letter-spacing:var(--title-track,.045em);
   line-height:1;
   color:var(--c-ink);
   text-shadow:0 1px 2px rgba(0,0,0,.5);
@@ -385,7 +391,6 @@ input[type=date]::-webkit-calendar-picker-indicator{filter:invert(.7) sepia(1) s
   overflow:hidden;
   white-space:nowrap;
 }
-.case--vhs .case__title{--title-size:14px}
 
 /* rating pips at the foot of the spine */
 .case__pips{
@@ -465,7 +470,8 @@ input[type=date]::-webkit-calendar-picker-indicator{filter:invert(.7) sepia(1) s
     inset 0 0 0 1px rgba(255,255,255,.09),
     0 26px 50px -22px #000;
   display:grid;place-items:center;
-  font-family:var(--f-disp);font-size:1.4rem;color:var(--c-ink);
+  font-family:var(--title-font,var(--f-disp));font-size:1.4rem;color:var(--c-ink);
+  text-transform:uppercase;
   text-align:center;padding:1rem;
   overflow:hidden;
 }

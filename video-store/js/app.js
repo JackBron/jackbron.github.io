@@ -91,6 +91,82 @@ function leanFor(id) {
   return steps[h % steps.length];
 }
 
+/* ---- spine typography --------------------------------------------- */
+
+/**
+ * Real shelves are not set in one typeface. Each film hashes onto a face and
+ * a tracking value, so the shelf varies without ever varying between renders.
+ * All of these are condensed or narrow enough to survive a 17px Blu-ray spine.
+ */
+const SPINE_FONTS = [
+  { css: "'Bebas Neue', sans-serif", track: '.05em' },
+  { css: "'Anton', sans-serif", track: '.02em' },
+  { css: "'Staatliches', sans-serif", track: '.06em' },
+  { css: "'Oswald', sans-serif", track: '.03em' },
+  { css: "'Fjalla One', sans-serif", track: '.02em' },
+  { css: "'Archivo Narrow', sans-serif", track: '.04em' },
+  { css: "'Special Elite', monospace", track: '0' },
+];
+
+function fnv(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  return h;
+}
+
+function fontFor(title) {
+  return SPINE_FONTS[fnv('f:' + title) % SPINE_FONTS.length];
+}
+
+/* The printable run of a spine: case height less the format cap and the pips. */
+const TITLE_RUN = { vhs: 162, dvd: 146, bluray: 140 };
+/* Cap height has to clear the spine width, so the ceiling is per format. */
+const TITLE_MAX = { vhs: 17, dvd: 13, bluray: 12.5 };
+const TITLE_MIN = 6.5;
+
+let measureCtx;
+
+/** Length of `text` set in `font` at `size`, letter-spacing included. */
+function runLength(text, font, size) {
+  measureCtx = measureCtx || document.createElement('canvas').getContext('2d');
+  const probe = 100;
+  measureCtx.font = `${probe}px ${font.css}`;
+  const w = measureCtx.measureText(text.toUpperCase()).width / probe;
+  const track = parseFloat(font.track) || 0;   // measureText ignores letter-spacing
+  return (w + track * text.length) * size;
+}
+
+/**
+ * Fit a title to its spine. Measured in the real face rather than estimated
+ * from character count — Anton and Special Elite differ by nearly 40% in
+ * advance width at the same size, so one shared ratio would clip one face and
+ * under-set the other.
+ *
+ * Shrinking stops at TITLE_MIN, below which a spine is unreadable anyway; a
+ * title still too long at that size gets abbreviated, which is what a real
+ * sleeve does rather than running off the end of the case.
+ */
+function fitTitle(title, font, format) {
+  const run = TITLE_RUN[format] || TITLE_RUN.vhs;
+  const max = TITLE_MAX[format] || TITLE_MAX.vhs;
+
+  const at1 = runLength(title, font, 1);
+  if (!at1) return { size: max, text: title };
+
+  const ideal = run / at1;
+  if (ideal >= TITLE_MIN) return { size: Math.min(max, ideal), text: title };
+
+  // Longest prefix that fits at the minimum size, plus an ellipsis.
+  let lo = 1;
+  let hi = title.length;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (runLength(title.slice(0, mid) + '…', font, TITLE_MIN) <= run) lo = mid;
+    else hi = mid - 1;
+  }
+  return { size: TITLE_MIN, text: title.slice(0, lo).trimEnd() + '…' };
+}
+
 function caseEl(f) {
   const c = f.colors || paletteFromTitle(f.title);
   const btn = document.createElement('button');
@@ -103,6 +179,13 @@ function caseEl(f) {
   btn.style.setProperty('--c-dark', c.dark);
   btn.style.setProperty('--c-ink', c.ink);
   btn.style.setProperty('--lean', leanFor(f.id) + 'deg');
+
+  const font = fontFor(f.title);
+  const fit = fitTitle(f.title, font, f.format);
+  btn.style.setProperty('--title-font', font.css);
+  btn.style.setProperty('--title-track', font.track);
+  btn.style.setProperty('--title-size', fit.size.toFixed(2) + 'px');
+
   btn.setAttribute('aria-label',
     `${f.title}${f.year ? ', ' + f.year : ''} — ${FORMAT_LABEL[f.format]}, rated ${f.rating} of 5, watched ${prettyDate(f.watchedOn)}`);
   btn.title = `${f.title}${f.year ? ` (${f.year})` : ''}`;
@@ -113,7 +196,7 @@ function caseEl(f) {
   btn.innerHTML =
     `<span class="case__body">
        <span class="case__cap"></span>
-       <span class="case__title">${esc(f.title)}</span>
+       <span class="case__title">${esc(fit.text)}</span>
        <span class="case__pips">${pips}</span>
      </span>`;
   return btn;
@@ -162,6 +245,8 @@ function openViewer(id) {
   stage.style.setProperty('--c-base', c.base);
   stage.style.setProperty('--c-dark', c.dark);
   stage.style.setProperty('--c-ink', c.ink);
+  // when there is no art the front falls back to type, so use the spine's face
+  stage.style.setProperty('--title-font', fontFor(f.title).css);
 
   const front = $('#vFront');
   if (f.poster) {
@@ -485,4 +570,10 @@ async function removeCurrent() {
   S.films = await Store.list();
   refreshLookupHint();
   render();
+
+  // First paint measures against the fallback face if the webfonts are still
+  // in flight, which sizes every spine wrong. Re-fit once they have landed.
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => { measureCtx = null; render(); });
+  }
 })();
