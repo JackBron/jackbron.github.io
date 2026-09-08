@@ -235,31 +235,35 @@ footer p{margin:.4rem 0}
   <main>
     <p class="prompt">visitor@jackbron:~$ <span class="cmd">ls ./projects</span></p>
 
-    <div class="empty">
-      <p class="total">total 0</p>
-      <p>No projects published yet. New builds get listed here.</p>
-    </div>
+    <ul class="projects">
 
-    <!--
-      To add a project, delete the .empty block above and use this list:
+      <!-- ===== copy this <li> block to add another project ===== -->
+      <li class="project">
+        <a href="./line-studio/">
+          <div class="project-head">
+            <span class="idx">01</span>
+            <h2>line-studio</h2>
+            <span class="status live">live</span>
+            <span class="go">open &rarr;</span>
+          </div>
+          <p class="desc">
+            A cooking mode for the stove. Scales ingredients off a servings
+            stepper, walks the recipe step by step, runs concurrent timers, plans
+            the week and rolls it all into an aggregated shopping list. Single
+            HTML file, no build, no server &mdash; recipes load as JSON you drop
+            on the window. Ships with a demo recipe.
+          </p>
+          <ul class="tags">
+            <li>vanilla-js</li>
+            <li>single-file</li>
+            <li>offline</li>
+            <li>localstorage</li>
+          </ul>
+        </a>
+      </li>
+      <!-- ===== end project entry ===== -->
 
-      <ul class="projects">
-        <li class="project">
-          <a href="./PROJECT-SLUG/">
-            <div class="project-head">
-              <span class="idx">01</span>
-              <h2>project-name</h2>
-              <span class="status live">live</span>
-              <span class="go">open &rarr;</span>
-            </div>
-            <p class="desc">One or two sentences on what it does.</p>
-            <ul class="tags">
-              <li>tag</li>
-            </ul>
-          </a>
-        </li>
-      </ul>
-    -->
+    </ul>
 
     <p class="prompt">visitor@jackbron:~$ <span class="cursor" aria-hidden="true"></span></p>
   </main>

@@ -1,0 +1,7 @@
+# Editor / tooling
+.claude/
+
+# Line Studio working folder — source of truth for the app lives here, but the
+# recipe JSONs and Recipe_PDFs are third-party recipe content and stay unpublished.
+# The deployed copy of the app is line-studio/index.html.
+Cooking_Mode/
