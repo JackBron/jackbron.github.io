@@ -1,11 +1,274 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-	<meta charset="utf-8">
-	<meta name="viewport" content="width=device-width, initial-scale=1">
-	<title>Hosting With GitHub</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jackbron.github.io — index</title>
+<meta name="description" content="Index of projects hosted at jackbron.github.io.">
+<meta name="color-scheme" content="dark">
+<meta property="og:title" content="jackbron.github.io">
+<meta property="og:description" content="Index of projects hosted at jackbron.github.io.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://jackbron.github.io/">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='5' fill='%230a0d0a'/><path d='M7 9l7 7-7 7' fill='none' stroke='%2340ff7a' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/><path d='M17 23h9' stroke='%2340ff7a' stroke-width='3' stroke-linecap='round'/></svg>">
+
+<style>
+:root{
+  --bg:#080b08;
+  --panel:#0d120d;
+  --fg:#40ff7a;
+  --fg-dim:#2aa855;
+  --fg-faint:#1c6b38;
+  --amber:#ffb347;
+  --rule:#173d24;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
+}
+
+*{box-sizing:border-box}
+
+html{-webkit-text-size-adjust:100%}
+
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--fg);
+  font:400 15px/1.65 var(--mono);
+  padding:clamp(1.25rem,4vw,3.5rem) clamp(1rem,4vw,2rem) 4rem;
+  text-shadow:0 0 6px rgba(64,255,122,.28);
+  overflow-x:hidden;
+}
+
+/* CRT dressing: scanlines + vignette. Purely decorative. */
+body::before,body::after{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:9;
+}
+body::before{
+  background:repeating-linear-gradient(
+    to bottom,
+    rgba(0,0,0,0) 0 2px,
+    rgba(0,0,0,.28) 2px 4px
+  );
+  opacity:.5;
+}
+body::after{
+  background:radial-gradient(ellipse at center,rgba(0,0,0,0) 45%,rgba(0,0,0,.6) 100%);
+}
+
+.wrap{max-width:52rem;margin:0 auto;position:relative;z-index:1}
+
+a{color:inherit}
+
+:focus-visible{outline:2px solid var(--amber);outline-offset:3px}
+
+/* ---------- header ---------- */
+
+.titlebar{
+  border:1px solid var(--rule);
+  border-bottom:none;
+  padding:.35rem .75rem;
+  font-size:.78rem;
+  letter-spacing:.08em;
+  color:var(--fg-dim);
+  display:flex;
+  gap:.75rem;
+  justify-content:space-between;
+  background:var(--panel);
+}
+.titlebar span:last-child{white-space:nowrap}
+
+header.masthead{
+  border:1px solid var(--rule);
+  background:var(--panel);
+  padding:clamp(1.5rem,5vw,2.5rem) clamp(1rem,4vw,2rem);
+}
+
+h1{
+  margin:0;
+  font-size:clamp(1.4rem,6.2vw,2.6rem);
+  font-weight:700;
+  letter-spacing:.02em;
+  line-height:1.15;
+  word-break:break-word;
+}
+h1 .dot{color:var(--fg-faint)}
+
+.tagline{
+  margin:.9rem 0 0;
+  color:var(--fg-dim);
+  font-size:.9rem;
+  letter-spacing:.04em;
+}
+
+/* ---------- shell prompt lines ---------- */
+
+.prompt{
+  margin:2.25rem 0 1rem;
+  font-size:.92rem;
+  color:var(--fg-dim);
+  word-break:break-word;
+}
+.prompt .cmd{color:var(--fg)}
+
+.cursor{
+  display:inline-block;
+  width:.6em;height:1.05em;
+  background:var(--fg);
+  vertical-align:-.18em;
+  margin-left:.3em;
+  animation:blink 1.1s step-end infinite;
+}
+@keyframes blink{50%{opacity:0}}
+
+/* ---------- project list ---------- */
+
+.projects{list-style:none;margin:0;padding:0;display:grid;gap:1rem}
+
+.project a{
+  display:block;
+  border:1px solid var(--rule);
+  background:var(--panel);
+  padding:1.1rem 1.15rem;
+  text-decoration:none;
+  transition:border-color .15s,background .15s,transform .15s;
+}
+.project a:hover,.project a:focus-visible{
+  border-color:var(--fg-dim);
+  background:#101810;
+  transform:translateX(3px);
+}
+.project a:hover .go{color:var(--amber)}
+
+.project-head{
+  display:flex;
+  align-items:baseline;
+  gap:.7rem;
+  flex-wrap:wrap;
+}
+.idx{color:var(--fg-faint);font-size:.8rem}
+.project h2{
+  margin:0;
+  font-size:1.05rem;
+  font-weight:700;
+  letter-spacing:.01em;
+}
+.go{
+  margin-left:auto;
+  font-size:.8rem;
+  color:var(--fg-faint);
+  white-space:nowrap;
+  transition:color .15s;
+}
+
+.status{
+  font-size:.68rem;
+  letter-spacing:.1em;
+  border:1px solid currentColor;
+  padding:.05rem .4rem;
+  text-transform:uppercase;
+}
+.status.wip{color:var(--amber);text-shadow:0 0 6px rgba(255,179,71,.3)}
+.status.live{color:var(--fg-dim)}
+
+.desc{
+  margin:.7rem 0 0;
+  color:var(--fg-dim);
+  font-size:.88rem;
+  max-width:60ch;
+}
+
+.tags{
+  list-style:none;
+  display:flex;
+  flex-wrap:wrap;
+  gap:.4rem;
+  margin:.85rem 0 0;
+  padding:0;
+  font-size:.74rem;
+  color:var(--fg-faint);
+}
+.tags li::before{content:"#"}
+
+/* ---------- empty state ---------- */
+
+.empty{
+  border:1px dashed var(--rule);
+  background:var(--panel);
+  padding:1.6rem 1.15rem;
+  color:var(--fg-faint);
+  font-size:.88rem;
+}
+.empty p{margin:0}
+.empty .total{color:var(--fg-dim);margin-bottom:.5rem}
+
+/* ---------- footer ---------- */
+
+footer{
+  margin-top:3rem;
+  padding-top:1.25rem;
+  border-top:1px solid var(--rule);
+  font-size:.82rem;
+  color:var(--fg-faint);
+}
+footer a{color:var(--fg-dim);text-decoration:none;border-bottom:1px dotted var(--rule)}
+footer a:hover{color:var(--amber);border-bottom-color:currentColor}
+footer p{margin:.4rem 0}
+
+@media (prefers-reduced-motion:reduce){
+  *{animation:none!important;transition:none!important}
+  body::before{display:none}
+}
+</style>
 </head>
 <body>
+<div class="wrap">
 
+  <div class="titlebar">
+    <span>~/jackbron.github.io</span>
+    <span>tty1</span>
+  </div>
+
+  <header class="masthead">
+    <h1>jackbron<span class="dot">.</span>github<span class="dot">.</span>io</h1>
+    <p class="tagline">// static host &middot; project index</p>
+  </header>
+
+  <main>
+    <p class="prompt">visitor@jackbron:~$ <span class="cmd">ls ./projects</span></p>
+
+    <div class="empty">
+      <p class="total">total 0</p>
+      <p>No projects published yet. New builds get listed here.</p>
+    </div>
+
+    <!--
+      To add a project, delete the .empty block above and use this list:
+
+      <ul class="projects">
+        <li class="project">
+          <a href="./PROJECT-SLUG/">
+            <div class="project-head">
+              <span class="idx">01</span>
+              <h2>project-name</h2>
+              <span class="status live">live</span>
+              <span class="go">open &rarr;</span>
+            </div>
+            <p class="desc">One or two sentences on what it does.</p>
+            <ul class="tags">
+              <li>tag</li>
+            </ul>
+          </a>
+        </li>
+      </ul>
+    -->
+
+    <p class="prompt">visitor@jackbron:~$ <span class="cursor" aria-hidden="true"></span></p>
+  </main>
+
+  <footer>
+    <p>Hosted on GitHub Pages.</p>
+    <p><a href="https://github.com/JackBron">github.com/JackBron</a></p>
+  </footer>
+
+</div>
 </body>
 </html>
