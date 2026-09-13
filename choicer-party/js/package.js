@@ -177,6 +177,35 @@ export async function buildPackage(entries) {
   return pkg;
 }
 
+/* ------------------------------------------------------------------ */
+/* Wire form for a room: everything but the blobs.                    */
+
+export function summarizePackage(pkg) {
+  return {
+    title: pkg.title, subtitle: pkg.subtitle, authors: pkg.authors, characters: pkg.characters,
+    totalDuration: pkg.totalDuration, videoName: pkg.videoName,
+    lines: pkg.lines.map((l) => ({
+      id: l.id, order: l.order, caption: l.caption, characters: l.characters,
+      timestamps: l.timestamps, start: l.start, end: l.end, duration: l.duration,
+    })),
+  };
+}
+
+/** A player's copy: same shape as buildPackage's model, assets arrive later. */
+export function packageFromSummary(s) {
+  const urls = [];
+  const lines = s.lines.map((l) => ({ ...l, image: null, imageUrl: null, wav: null, wavInfo: null }));
+  return {
+    title: s.title, subtitle: s.subtitle || '', authors: s.authors || [], icon: null,
+    characters: s.characters, lines, totalDuration: s.totalDuration,
+    hasVideo: false, videoName: null, remote: true,
+    lineById(id) { return lines.find((l) => l.id === id) || null; },
+    async getVideo() { return null; },
+    url(blob) { const u = URL.createObjectURL(blob); urls.push(u); return u; },
+    dispose() { for (const u of urls) URL.revokeObjectURL(u); urls.length = 0; },
+  };
+}
+
 /** Find the directory holding the package and index its files by basename. */
 function locateRoot(entries) {
   // Windows zip writers (PowerShell's Compress-Archive among them) store

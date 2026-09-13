@@ -70,10 +70,12 @@ export class WaveformView {
     this._dirty = true;
   }
 
-  /** layers: [{ samples|buffer, sampleRate?, color, alpha?, offset?, normalize? }] */
+  /** layers: [{ samples|buffer, sampleRate?, length?, color, alpha?, offset?, normalize? }]
+   *  `length` limits how many samples are drawn, for a buffer that is still filling. */
   setLayers(layers) {
     this.layers = layers.map((l) => ({
       samples: l.buffer ? monoSamples(l.buffer) : l.samples,
+      length: l.length ?? null,
       sampleRate: l.buffer ? l.buffer.sampleRate : l.sampleRate,
       color: l.color,
       alpha: l.alpha ?? 1,
@@ -85,6 +87,12 @@ export class WaveformView {
   }
 
   setPlayhead(t) { this.playhead = t; }
+  /** Grow a live layer without rebuilding the layer list. */
+  setLayerLength(index, length) {
+    const l = this.layers[index];
+    if (!l || l.length === length) return;
+    l.length = length; this._dirty = true;
+  }
   setCountdown(text) { this.countdown = text; }
 
   _size() {
@@ -123,11 +131,12 @@ export class WaveformView {
     g.beginPath(); g.moveTo(0, h / 2 + 0.5); g.lineTo(w, h / 2 + 0.5); g.stroke();
 
     for (const layer of this.layers) {
-      if (!layer.samples || !layer.samples.length) continue;
+      const samples = layer.length != null ? layer.samples.subarray(0, layer.length) : layer.samples;
+      if (!samples || !samples.length) continue;
       const startX = Math.round(layer.offset * pxPerSec);
-      const cols = Math.max(1, Math.min(w - startX, Math.round((layer.samples.length / layer.sampleRate) * pxPerSec)));
+      const cols = Math.max(1, Math.min(w - startX, Math.round((samples.length / layer.sampleRate) * pxPerSec)));
       if (cols <= 0) continue;
-      const { min, max, peak } = computePeaks(layer.samples, layer.sampleRate, cols);
+      const { min, max, peak } = computePeaks(samples, layer.sampleRate, cols);
       const scale = layer.normalize ? (peak > 0.02 ? 0.92 / peak : 1) : 1;
       const mid = h / 2;
       g.globalAlpha = layer.alpha;

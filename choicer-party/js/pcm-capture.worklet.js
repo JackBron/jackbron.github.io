@@ -14,12 +14,15 @@ class PcmCapture extends AudioWorkletProcessor {
     this.startFrame = 0;
     this.endFrame = 0;
     this.chunks = [];
+    this.live = [];        // chunks not yet streamed to the main thread
+    this.liveLen = 0;
     this.port.onmessage = (e) => {
       const msg = e.data;
       if (msg.type === 'arm') {
         this.startFrame = msg.startFrame;
         this.endFrame = msg.endFrame;
         this.chunks = [];
+        this.live = []; this.liveLen = 0;
         this.armed = true;
       } else if (msg.type === 'stop') {
         this.finish();
@@ -48,14 +51,27 @@ class PcmCapture extends AudioWorkletProcessor {
         for (let i = from; i < to; i++) out[i - from] += ch[i] * scale;
       }
       this.chunks.push(out);
+      this.live.push(out); this.liveLen += out.length;
+      // Stream roughly every 1024 frames so the waveform grows as it is sung.
+      if (this.liveLen >= 1024) this.flushLive();
     }
     if (blockEnd >= this.endFrame) this.finish();
     return true;
   }
 
+  flushLive() {
+    if (!this.liveLen) return;
+    const out = new Float32Array(this.liveLen);
+    let o = 0;
+    for (const c of this.live) { out.set(c, o); o += c.length; }
+    this.live = []; this.liveLen = 0;
+    this.port.postMessage({ type: 'chunk', samples: out }, [out.buffer]);
+  }
+
   finish() {
     if (!this.armed) return;
     this.armed = false;
+    this.live = []; this.liveLen = 0;
     let total = 0;
     for (const c of this.chunks) total += c.length;
     const all = new Float32Array(total);

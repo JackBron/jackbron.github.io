@@ -34,8 +34,11 @@ export class Recorder {
     await this.ctx.audioWorklet.addModule(new URL('./pcm-capture.worklet.js', import.meta.url));
     this.capture = new AudioWorkletNode(this.ctx, 'pcm-capture', { numberOfInputs: 1, numberOfOutputs: 0 });
     this.capture.port.onmessage = (e) => {
-      if (e.data.type === 'done' && this._pending) {
+      if (e.data.type === 'chunk') {
+        this._onChunk?.(e.data.samples);
+      } else if (e.data.type === 'done' && this._pending) {
         const resolve = this._pending; this._pending = null;
+        this._onChunk = null;
         resolve(e.data.samples);
       }
     };
@@ -83,7 +86,7 @@ export class Recorder {
    * seconds; `monitor` (an AudioBuffer) is played from t0 through the speakers
    * when given, so a performer on headphones can hear the original.
    */
-  record({ duration, preroll = 1.6, tail = 0.5, monitor = null, monitorGain = 1 }) {
+  record({ duration, preroll = 1.6, tail = 0.5, monitor = null, monitorGain = 1, onChunk = null }) {
     if (!this.stream) throw new Error('Microphone is not open');
     if (this._pending) throw new Error('A take is already in progress');
     const sr = this.ctx.sampleRate;
@@ -93,6 +96,7 @@ export class Recorder {
 
     let monitorSrc = null;
     if (monitor) monitorSrc = this.play(monitor, { at: t0, gain: monitorGain });
+    this._onChunk = onChunk; // Float32Array pieces, in order, as they are captured
 
     const done = new Promise((resolve) => { this._pending = resolve; }).then((samples) => ({
       samples, sampleRate: sr, offset: 0, gain: 1,

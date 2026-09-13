@@ -215,3 +215,113 @@ button.rec.armed .rec-icon{background:#fff;border-radius:2px;box-shadow:none}
 @media (prefers-reduced-motion:reduce){
   *{animation:none!important;transition:none!important}
 }
+
+/* ======================================================================
+   r2: rooms
+   ====================================================================== */
+
+.small{font-size:.8rem}
+button.small{padding:.3rem .6rem;font-size:.82rem}
+button.big{padding:.75rem 1.4rem;font-size:1rem}
+
+.room-badge{
+  background:var(--panel2);border:1px solid var(--line2);border-radius:6px;padding:.25rem .6rem;
+  letter-spacing:.12em;font-weight:700;color:var(--amber);
+}
+
+/* ---------- loader: two doors ---------- */
+.loader-grid{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:1.25rem;width:min(1040px,100%);align-items:stretch}
+.drop{width:auto}
+.join{
+  border:1px solid var(--line);border-radius:16px;background:var(--panel);padding:2.5rem 1.5rem;
+  display:flex;flex-direction:column;align-items:center;text-align:center;justify-content:center;
+}
+.join h1{margin:0 0 .4rem;font-size:1.35rem;font-weight:600}
+.join p{margin:0 auto;color:var(--ink2);max-width:36ch}
+.join-form{display:flex;flex-direction:column;gap:.75rem;margin-top:1.4rem;width:min(300px,100%)}
+.join-form label{display:flex;flex-direction:column;gap:.3rem;text-align:left;font-size:.8rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.08em}
+.join-form input,.lobby-you input{
+  background:var(--bg);border:1px solid var(--line2);border-radius:8px;color:var(--ink);padding:.6rem .7rem;
+  font:inherit;font-size:1rem;
+}
+#joinCode{font-family:var(--mono);letter-spacing:.35em;text-transform:uppercase;font-size:1.4rem;text-align:center}
+
+/* ---------- lobby ---------- */
+.lobby{flex:1;display:flex;justify-content:center;padding:1.25rem 1rem 2rem}
+.lobby-card{width:min(1100px,100%);background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:1.25rem}
+.lobby-head{display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem}
+.lobby-head h2,.lobby-card h2{margin:0;font-size:1.2rem;font-weight:600}
+.lobby-you{display:flex;gap:1rem;align-items:center;flex-wrap:wrap;color:var(--ink2);font-size:.9rem}
+.lobby-you label{display:flex;align-items:center;gap:.5rem}
+.lobby-you input[type=text]{padding:.4rem .6rem;font-size:.95rem;width:12rem}
+.lobby-grid{display:grid;grid-template-columns:minmax(260px,1fr) minmax(0,2fr);gap:1.25rem;align-items:start}
+.room-card,.assign-card,.you-card{background:var(--bg2);border:1px solid var(--line);border-radius:var(--radius);padding:1rem}
+.room-label{font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3)}
+.room-code{
+  font-family:var(--mono);font-size:clamp(2.4rem,7vw,3.6rem);font-weight:700;letter-spacing:.3em;color:var(--amber);
+  text-indent:.3em;line-height:1.1;margin:.2rem 0 .3rem;text-shadow:0 0 18px rgba(255,176,58,.35);
+}
+.room-link{margin:0;color:var(--ink2);font-size:.85rem;word-break:break-all}
+.room-actions{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.9rem}
+.players{margin-top:1rem}
+.players h3,.assign-head h3{margin:0 0 .5rem;font-size:.78rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);font-weight:600}
+.player-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.35rem}
+.player-list li{display:flex;align-items:center;gap:.6rem;padding:.4rem .6rem;border-radius:8px;background:var(--panel2);border:1px solid var(--line)}
+.player-list .who{font-weight:600}
+.player-list .role{color:var(--ink3);font-size:.75rem;margin-left:auto}
+.player-list .chip{font-size:.62rem}
+.player-list .none{color:var(--ink3);font-style:italic}
+.avatar{width:22px;height:22px;border-radius:50%;background:var(--amber);color:#1a1200;font-weight:700;font-size:.7rem;display:grid;place-items:center}
+.assign-head{display:flex;justify-content:space-between;align-items:center}
+.table-wrap{overflow-x:auto;margin:.25rem 0 .75rem}
+.assign-table{width:100%;border-collapse:collapse;font-size:.88rem}
+.assign-table th{text-align:left;font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);padding:.35rem .5rem;border-bottom:1px solid var(--line)}
+.assign-table td{padding:.35rem .5rem;border-bottom:1px solid var(--line);vertical-align:middle}
+.assign-table td.cap{color:var(--ink2);max-width:36ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.assign-table select{
+  background:var(--bg);color:var(--ink);border:1px solid var(--line2);border-radius:6px;padding:.3rem .4rem;font:inherit;font-size:.85rem;max-width:12rem;
+}
+.lobby-lead{color:var(--ink2);margin:.3rem 0 1rem}
+.you-chars{display:flex;gap:.5rem;flex-wrap:wrap;margin:.4rem 0}
+.you-chars .chip{font-size:1rem;padding:.35rem .8rem}
+#pWait{margin-top:1rem}
+
+/* ---------- studio: room bar ---------- */
+.room-bar{
+  grid-column:1 / -1;display:flex;align-items:center;gap:1rem;flex-wrap:wrap;
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:.55rem .9rem;
+}
+.room-bar-left{display:flex;align-items:baseline;gap:.5rem}
+.room-bar-code{color:var(--amber);font-weight:700;letter-spacing:.2em;font-size:1rem}
+.perf-chips{display:flex;gap:.4rem;flex-wrap:wrap;flex:1}
+.perf-chip{
+  display:inline-flex;align-items:center;gap:.4rem;background:var(--panel2);border:1px solid var(--line);border-radius:999px;
+  padding:.15rem .6rem .15rem .3rem;font-size:.8rem;
+}
+.perf-chip .avatar{width:18px;height:18px;font-size:.6rem}
+.perf-chip .bar{width:48px;height:5px;background:var(--bg);border-radius:999px;overflow:hidden}
+.perf-chip .bar i{display:block;height:100%;background:var(--green)}
+.perf-chip.me{border-color:var(--amber)}
+.room-bar-right{display:flex;align-items:center;gap:.7rem;margin-left:auto}
+.studio.in-room{grid-template-areas:"bar bar" "lines stage" "lines dub";grid-template-rows:auto auto 1fr}
+.room-bar{grid-area:bar}
+
+/* ---------- studio: ownership ---------- */
+.line-item.theirs{opacity:.6}
+.line-item.theirs:hover{opacity:.85}
+.line-item .by{color:var(--ink3);font-size:.68rem;margin-left:auto;white-space:nowrap}
+.chip.owner{background:var(--panel2);color:var(--ink2);border:1px solid var(--line2)}
+.frame-empty{position:absolute;inset:0;display:grid;place-items:center;color:var(--ink3);font-size:.9rem;background:#000}
+.pager{align-items:center}
+
+/* ---------- dub: clip element (native video or ogv.js canvas) ---------- */
+.dub-view .clip{width:100%;height:100%;object-fit:contain;display:block}
+.dub-view ogvjs{display:block;width:100%;height:100%}
+.dub-view ogvjs canvas{width:100%!important;height:100%!important;object-fit:contain;display:block}
+
+@media (max-width:960px){
+  .loader-grid{grid-template-columns:1fr}
+  .lobby-grid{grid-template-columns:1fr}
+  .studio.in-room{grid-template-areas:"bar" "stage" "lines" "dub";grid-template-rows:auto}
+  .room-bar-right{margin-left:0}
+}

@@ -79,57 +79,95 @@ you change either, or returning visitors keep the cached copy.
 
 ## Choicer Party (`choicer-party/`)
 
-A browser dubbing booth for Choicer Voicer
-packages, and the first slice of a multiplayer version. Vanilla ES modules, no
-build. Needs `http(s)://` (the AudioWorklet will not load from `file://`); the
-`landing` server in `.claude/launch.json` serves it at
-`http://localhost:4173/choicer-party/`.
+A browser dubbing booth for Choicer Voicer packages, solo or as a party game:
+the host loads a package, opens a room, friends join on their phones with a
+four-letter code, each gets a character, records their lines, and the room
+plays the finished dub back in sync. Vanilla ES modules, no build. Needs
+`http(s)://` (the AudioWorklet will not load from `file://`).
 
 ```
 choicer-party/
-  index.html                  markup
+  index.html                  markup: loader, lobby, booth
   css/party.css               the booth
   js/ini.js                   Godot ConfigFile (.ini) card parser
   js/zip.js                   zip reader on DecompressionStream, no library
   js/wav.js                   WAV header walk + 16-bit encoder
-  js/package.js               folder / zip / drop / URL -> package model
-  js/pcm-capture.worklet.js   AudioWorklet: sample-accurate mic capture
+  js/package.js               folder / zip / drop / URL -> package model; wire summary
+  js/pcm-capture.worklet.js   AudioWorklet: sample-accurate mic capture, streams chunks
   js/recorder.js              shared AudioContext: mic, takes, playback
-  js/waveform.js              layered peaks + playhead on a canvas
+  js/waveform.js              layered peaks + playhead on a canvas, live-growing layer
   js/mixer.js                 OfflineAudioContext mixdown
-  js/app.js                   UI wiring
+  js/video.js                 clip playback: native <video>, else ogv.js (Theora)
+  js/room.js                  Trystero room, wire format, character dealing (lazy-loaded)
+  js/app.js                   UI wiring for solo / host / player
 ```
 
 **Package format.** A flat folder: `_pack_info.ini` (title, authors, icon),
 one `NNN_line_NN.ini` / `.png` / `.wav` triple per line (caption, 640x360 frame,
 the original audio for that line at 48 kHz), an optional `dub_markers.json`
-index with start/end times, and an optional `dub_video.ogv`. The video is
-Theora: Firefox still decodes it, Chrome and Edge dropped the decoder in 2024
-and Safari never had it, and `canPlayType('video/ogg')` still answers "maybe"
-in Chrome because the Vorbis audio track is fine. The app probes the codec and
-checks `videoWidth` after metadata, and falls back to a slideshow of the
-line frames when the picture cannot be decoded. The `.ini` fields
+index with start/end times, and an optional `dub_video.ogv`. The `.ini` fields
 `dub_timestamps` and `dub_characters` are arrays, so one card can carry several
 speakers. The `.ini` cards are the source of truth; the JSON only supplies
 timing when present.
 
-**Packages are never committed.** They contain the clip itself. The app reads
-them from disk (folder pick, drag-drop, or `.zip`) or from any URL that serves
-the folder with CORS; `?pkg=<base-url>` loads one on open, which is how it is
-tested locally.
+**The video is Theora, and no browser decodes Theora any more.** Chrome and
+Edge removed it in 2024, Firefox 130 followed, Safari never had it. Worse,
+`canPlayType('video/ogg')` still answers "maybe" because the Vorbis audio track
+is fine, so a naive `<video>` plays sound over a black picture. `video.js`
+probes the codec, checks `videoWidth` after metadata, and otherwise loads
+[ogv.js](https://github.com/bvibber/ogv.js) 1.9.0 from jsDelivr, a JS/wasm
+Theora decoder that renders to a canvas and mimics the media-element API. It
+plays the 1080p example fine and seeks from a `blob:` URL. Players' phones
+never get the video; they see a slideshow of the line frames.
+
+**Packages are never committed.** They contain the clip itself. The host reads
+them from disk (folder pick, drag-drop, or `.zip`) or from any URL serving the
+folder with CORS; `?pkg=<base-url>` loads one on open, which is how it is
+tested locally. Players receive only the PNG frames and the WAVs of their own
+lines, over WebRTC.
+
+**Rooms** run on [Trystero](https://github.com/dmotz/trystero) 0.25 (pinned,
+from jsDelivr): peers meet through public Nostr relays, then talk directly over
+WebRTC data channels. Nothing is hosted by us. The host is authoritative:
+
+| action | from | to | payload |
+|---|---|---|---|
+| `hello` | player | host | `{name}` on peer join |
+| `roster` | host | all | host id/name, players, `assignments` (lineId -> peerId), phase |
+| `pack` | host | all | package summary without blobs |
+| `frame` | host | all | PNG bytes, metadata `{lineId}` |
+| `audio` | host | the line's performer | WAV bytes, metadata `{lineId}` |
+| `take` | anyone | all | Int16 mono PCM, metadata `{lineId, sampleRate, offset, by, ...}` |
+| `progress` | performer | all | `{lineId, status:'deleted'}` |
+| `clock` | player <-> host | | NTP-style offset estimate, best of six round trips |
+| `play` / `stop` | host | all | `{at}` in the host's `performance.now()` clock |
+
+Every peer holds every take, so every peer renders the same mix locally; the
+host's `play {at}` is converted through the measured clock offset into a local
+`AudioContext` start time. Two tabs on one machine started within 1 ms of each
+other. Character dealing: with at least as many characters as performers, whole
+characters go round-robin; with more performers than characters (a one-voice
+pack at a party), lines go round-robin. The host can override per line.
+
+Trystero 0.25 API notes, since they bit: `makeAction` returns
+`{send, onMessage, onReceiveProgress}` where the two handlers are *assigned*,
+not called; `onPeerJoin`/`onPeerLeave` are assigned the same way; callbacks
+receive `(data, {peerId, metadata})`. `room.js` normalises all of that.
 
 **Timing.** Capture and the playhead run on one `AudioContext` clock: the
 worklet is told the exact start frame of the take, so a recording lines up
 with the line to the sample rather than with `MediaRecorder`'s variable start
-latency. Each take carries an `offset` the performer can nudge; samples are
-never resampled or trimmed, the offset is applied at mix time.
+latency. The worklet also streams ~1024-frame chunks back while recording so
+the take draws itself under the original as it is performed. Each take carries
+an `offset` the performer can nudge; samples are never resampled or trimmed,
+the offset is applied at mix time and travels with the take.
 
 **Mixdown** is an `OfflineAudioContext` render with every take placed at its
-line's start. It is deterministic, which is what lets the multiplayer build
-have every peer render the same mix locally from the same takes.
+line's start. It is deterministic, which is what lets every peer render the
+same mix from the same takes.
 
-Not yet: rooms, character assignment, shipping takes between browsers, a
-muxed video download (the `.wav` mix downloads today), persisting takes
-across a reload, and a way to watch the real video outside Firefox (a
-one-time transcode of `dub_video.ogv` to WebM/VP9 on the host, in-browser or
-via ffmpeg, is the likely answer).
+Not yet: reassigning a line after recording has started (a player who drops
+out strands their lines until the host re-deals from a fresh lobby), a muxed
+video download (the `.wav` mix downloads today; ogv.js draws to a canvas, so
+`canvas.captureStream` + the mix into `MediaRecorder` is the route), persisting
+takes across a reload, and a QR code for the join link.
