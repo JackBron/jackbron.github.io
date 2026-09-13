@@ -42,14 +42,17 @@ export function autoGain(samples, target = 0.85, min = 0.5, max = 8) {
   return Math.max(min, Math.min(max, target / peak));
 }
 
-/** Peak-normalise a rendered mix in place so quiet phone mics still carry. */
+/**
+ * Peak-normalise a rendered mix in place: up so quiet phone mics still carry,
+ * down so levelled takes that overlap do not clip on the way out.
+ */
 export function normalize(buffer, target = 0.89) {
   let peak = 0;
   for (let c = 0; c < buffer.numberOfChannels; c++) {
     const d = buffer.getChannelData(c);
     for (let i = 0; i < d.length; i++) { const v = Math.abs(d[i]); if (v > peak) peak = v; }
   }
-  if (peak < 1e-4 || peak >= target) return buffer;
+  if (peak < 1e-4 || Math.abs(peak - target) < 0.01) return buffer;
   const k = target / peak;
   for (let c = 0; c < buffer.numberOfChannels; c++) {
     const d = buffer.getChannelData(c);

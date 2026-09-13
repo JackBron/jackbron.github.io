@@ -652,8 +652,7 @@ async function showLine(i) {
 async function originalBuffer(line) {
   if (!line.wav) return null;
   if (state.originals.has(line.id)) return state.originals.get(line.id);
-  await recorder.init();
-  const buf = await recorder.decode(line.wav);
+  const buf = await recorder.decode(line.wav); // offline decoder: no gesture needed
   state.originals.set(line.id, buf);
   return buf;
 }
@@ -791,9 +790,18 @@ function onNudge() {
 
 /* ---------- line playback ---------- */
 
+function warnIfBlocked() {
+  setTimeout(() => {
+    if (recorder.ctx && recorder.ctx.state !== 'running') {
+      setStatus('The browser is blocking sound until you interact with the page. Click or tap once, then try again.', true);
+    }
+  }, 400);
+}
+
 async function playLine(which) {
   if (state.play !== 'idle') return;
   recorder.unlock();
+  warnIfBlocked();
   const line = currentLine();
   const original = await originalBuffer(line);
   const take = state.takes.get(line.id);
@@ -846,6 +854,7 @@ async function startDub(ctxAt = null) {
   if (!state.takes.size) return;
   if (state.play !== 'idle') stopDub();
   recorder.unlock();
+  warnIfBlocked();
   await recorder.init();
   const mix = await ensureMix();
   state.play = 'dub';
@@ -1081,9 +1090,12 @@ navigator.mediaDevices?.addEventListener?.('devicechange', () => { if (!el.studi
 // Autoplay policy: the first tap or key anywhere creates and resumes the
 // AudioContext, so later scheduled playback (a host's "play for everyone")
 // is allowed to make sound without another gesture.
-for (const evt of ['pointerdown', 'keydown', 'touchend']) {
+for (const evt of ['pointerdown', 'mousedown', 'touchend', 'click', 'keydown']) {
   document.addEventListener(evt, () => recorder.unlock(), { passive: true, capture: true });
 }
+// Coming back to the tab (a phone that switched apps) can leave the context
+// suspended or interrupted; resume is allowed then because it was created in a gesture.
+document.addEventListener('visibilitychange', () => { if (!document.hidden && recorder.ctx) recorder.unlock(); });
 el.btnPrev.addEventListener('click', () => showLine(state.index - 1));
 el.btnNext.addEventListener('click', () => showLine(state.index + 1));
 el.btnPlayDub.addEventListener('click', () => startDub());

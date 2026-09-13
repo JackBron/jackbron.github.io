@@ -12,8 +12,24 @@
 // (seconds) the performer can nudge later; `offset` is applied at mix time,
 // the samples are never touched.
 
+import { encodeWav } from './wav.js';
+
+// Decoding must not depend on the live AudioContext: under autoplay rules
+// (Firefox especially) a context that is not yet allowed to start also holds
+// back decodeAudioData, and the waveform would wait for the first Record.
+// OfflineAudioContexts are not subject to the policy.
+const decoders = new Map();
+function decoderFor(rate) {
+  if (!decoders.has(rate)) decoders.set(rate, new OfflineAudioContext(1, 1, rate));
+  return decoders.get(rate);
+}
+
+const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent)
+  || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
 export class Recorder {
   constructor() {
+    this._unmuter = null;
     this.ctx = null;
     this.stream = null;
     this.deviceId = '';
@@ -32,12 +48,14 @@ export class Recorder {
   get running() { return this.ctx?.state === 'running'; }
 
   /**
-   * Create the context and kick off the worklet load. Synchronous on purpose:
-   * call it from inside a click/tap handler so iOS and Android accept it.
-   * Never awaits resume() — under the autoplay policy that promise can hang
-   * until the next user gesture, and decoding/drawing must not wait for it.
+   * Create the context and kick off the worklet load. Synchronous on purpose
+   * and ONLY ever called from inside a user gesture (click/tap/key handlers
+   * and a page-wide first-interaction listener): a context created during
+   * activation starts running everywhere, whereas resume() on one created
+   * earlier is refused by some browsers. Never awaits resume().
    */
   unlock() {
+    if (IS_IOS) this._unmuteIOS();
     if (!this.ctx) {
       this.ctx = new AudioContext({ latencyHint: 'interactive' });
       this._ready = this.ctx.audioWorklet.addModule(new URL('./pcm-capture.worklet.js', import.meta.url)).then(() => {
@@ -54,8 +72,25 @@ export class Recorder {
         if (this.micSource) this.micSource.connect(this.capture);
       });
     }
-    if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
+    if (this.ctx.state !== 'running') this.ctx.resume().catch(() => {});
     return this.ctx;
+  }
+
+  /**
+   * iOS mutes Web Audio while the ringer switch is on silent, but not media
+   * elements. Playing a (silent) <audio> once switches WebKit's audio session
+   * to playback mode, after which the AudioContext is audible too.
+   */
+  _unmuteIOS() {
+    if (this._unmuter) return;
+    try {
+      const a = document.createElement('audio');
+      a.setAttribute('playsinline', '');
+      a.src = URL.createObjectURL(encodeWav([new Float32Array(800)], 8000));
+      a.loop = false;
+      a.play().catch(() => {});
+      this._unmuter = a;
+    } catch { /* not fatal */ }
   }
 
   /** Context + worklet ready. Does not require the context to be running. */
@@ -113,9 +148,10 @@ export class Recorder {
     return Math.min(1, Math.sqrt(sum / this._level.length) * 3);
   }
 
+  /** Decode without needing (or creating) the live context. */
   async decode(blob) {
-    await this.init();
-    return this.ctx.decodeAudioData(await blob.arrayBuffer());
+    const rate = this.ctx?.sampleRate ?? 48000;
+    return decoderFor(rate).decodeAudioData(await blob.arrayBuffer());
   }
 
   /**

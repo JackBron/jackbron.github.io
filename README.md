@@ -167,15 +167,22 @@ line's start. It is deterministic, which is what lets every peer render the
 same mix from the same takes. Each take also carries a `gain` set when it is
 saved (`autoGain`: peak to -1.4 dBFS, between x0.5 and x8) because phones
 record quietly; it travels with the take and is applied at mix and preview
-time, never to the samples.
+time, never to the samples. The rendered mix is then peak-normalised both
+ways, so overlapping levelled takes cannot clip on the way out.
 
-**Autoplay policy.** `AudioContext.resume()` can return a promise that never
-settles until the next user gesture, so nothing awaits it. `Recorder.unlock()`
-creates and resumes the context synchronously and is called from every
-click/tap handler and once from the first `pointerdown`/`keydown` on the page.
-That is what lets a phone that has only tapped "Join" play the host's
-scheduled dub later without another gesture, and lets the waveform draw before
-anyone has clicked Record.
+**Autoplay policy.** Three rules, learned the hard way on a Firefox host and
+a phone. (1) Decoding never touches the live `AudioContext`: Firefox holds
+back `decodeAudioData` on a context that is not yet allowed to start, so the
+waveform would wait for the first Record. Line audio is decoded through an
+`OfflineAudioContext`, which the policy does not cover. (2) The live context
+is only ever created inside a user gesture (`Recorder.unlock()`, called from
+every button handler and from a page-wide first-interaction listener on
+`pointerdown`/`mousedown`/`touchend`/`click`/`keydown`), because a context
+created during activation starts everywhere, while `resume()` on one created
+earlier is refused by some browsers. Nothing awaits `resume()`. (3) On iOS a
+silent `<audio>` element is played once on the first gesture so WebKit leaves
+the silent-switch-muted session; Web Audio is otherwise inaudible with the
+ringer switched off. If a browser still refuses, the status bar says so.
 
 **Microphone.** Browser voice processing (echo cancellation, noise suppression,
 automatic gain) is left at the browser defaults; turning it off made Android
