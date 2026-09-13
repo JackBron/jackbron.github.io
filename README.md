@@ -76,3 +76,60 @@ five covers came to 21KB.
 
 **Cache busting.** `index.html` links its CSS and JS with `?v=N`. Bump that when
 you change either, or returning visitors keep the cached copy.
+
+## Choicer Party (`choicer-party/`)
+
+A browser dubbing booth for Choicer Voicer
+packages, and the first slice of a multiplayer version. Vanilla ES modules, no
+build. Needs `http(s)://` (the AudioWorklet will not load from `file://`); the
+`landing` server in `.claude/launch.json` serves it at
+`http://localhost:4173/choicer-party/`.
+
+```
+choicer-party/
+  index.html                  markup
+  css/party.css               the booth
+  js/ini.js                   Godot ConfigFile (.ini) card parser
+  js/zip.js                   zip reader on DecompressionStream, no library
+  js/wav.js                   WAV header walk + 16-bit encoder
+  js/package.js               folder / zip / drop / URL -> package model
+  js/pcm-capture.worklet.js   AudioWorklet: sample-accurate mic capture
+  js/recorder.js              shared AudioContext: mic, takes, playback
+  js/waveform.js              layered peaks + playhead on a canvas
+  js/mixer.js                 OfflineAudioContext mixdown
+  js/app.js                   UI wiring
+```
+
+**Package format.** A flat folder: `_pack_info.ini` (title, authors, icon),
+one `NNN_line_NN.ini` / `.png` / `.wav` triple per line (caption, 640x360 frame,
+the original audio for that line at 48 kHz), an optional `dub_markers.json`
+index with start/end times, and an optional `dub_video.ogv`. The video is
+Theora: Firefox still decodes it, Chrome and Edge dropped the decoder in 2024
+and Safari never had it, and `canPlayType('video/ogg')` still answers "maybe"
+in Chrome because the Vorbis audio track is fine. The app probes the codec and
+checks `videoWidth` after metadata, and falls back to a slideshow of the
+line frames when the picture cannot be decoded. The `.ini` fields
+`dub_timestamps` and `dub_characters` are arrays, so one card can carry several
+speakers. The `.ini` cards are the source of truth; the JSON only supplies
+timing when present.
+
+**Packages are never committed.** They contain the clip itself. The app reads
+them from disk (folder pick, drag-drop, or `.zip`) or from any URL that serves
+the folder with CORS; `?pkg=<base-url>` loads one on open, which is how it is
+tested locally.
+
+**Timing.** Capture and the playhead run on one `AudioContext` clock: the
+worklet is told the exact start frame of the take, so a recording lines up
+with the line to the sample rather than with `MediaRecorder`'s variable start
+latency. Each take carries an `offset` the performer can nudge; samples are
+never resampled or trimmed, the offset is applied at mix time.
+
+**Mixdown** is an `OfflineAudioContext` render with every take placed at its
+line's start. It is deterministic, which is what lets the multiplayer build
+have every peer render the same mix locally from the same takes.
+
+Not yet: rooms, character assignment, shipping takes between browsers, a
+muxed video download (the `.wav` mix downloads today), persisting takes
+across a reload, and a way to watch the real video outside Firefox (a
+one-time transcode of `dub_video.ogv` to WebM/VP9 on the host, in-browser or
+via ffmpeg, is the likely answer).
