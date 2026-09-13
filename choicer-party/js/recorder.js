@@ -16,9 +16,11 @@ export class Recorder {
   constructor() {
     this.ctx = null;
     this.stream = null;
+    this.deviceId = '';
     this.micSource = null;
     this.capture = null;
     this.analyser = null;
+    this._ready = null;
     this._pending = null;
     this._playing = new Set();
     this._level = new Uint8Array(0);
@@ -27,37 +29,72 @@ export class Recorder {
   get sampleRate() { return this.ctx?.sampleRate ?? 48000; }
   get now() { return this.ctx?.currentTime ?? 0; }
   get micOpen() { return !!this.stream; }
+  get running() { return this.ctx?.state === 'running'; }
 
-  async init() {
-    if (this.ctx) { if (this.ctx.state === 'suspended') await this.ctx.resume(); return; }
-    this.ctx = new AudioContext({ latencyHint: 'interactive' });
-    await this.ctx.audioWorklet.addModule(new URL('./pcm-capture.worklet.js', import.meta.url));
-    this.capture = new AudioWorkletNode(this.ctx, 'pcm-capture', { numberOfInputs: 1, numberOfOutputs: 0 });
-    this.capture.port.onmessage = (e) => {
-      if (e.data.type === 'chunk') {
-        this._onChunk?.(e.data.samples);
-      } else if (e.data.type === 'done' && this._pending) {
-        const resolve = this._pending; this._pending = null;
-        this._onChunk = null;
-        resolve(e.data.samples);
-      }
-    };
-    if (this.ctx.state === 'suspended') await this.ctx.resume();
+  /**
+   * Create the context and kick off the worklet load. Synchronous on purpose:
+   * call it from inside a click/tap handler so iOS and Android accept it.
+   * Never awaits resume() — under the autoplay policy that promise can hang
+   * until the next user gesture, and decoding/drawing must not wait for it.
+   */
+  unlock() {
+    if (!this.ctx) {
+      this.ctx = new AudioContext({ latencyHint: 'interactive' });
+      this._ready = this.ctx.audioWorklet.addModule(new URL('./pcm-capture.worklet.js', import.meta.url)).then(() => {
+        this.capture = new AudioWorkletNode(this.ctx, 'pcm-capture', { numberOfInputs: 1, numberOfOutputs: 0 });
+        this.capture.port.onmessage = (e) => {
+          if (e.data.type === 'chunk') {
+            this._onChunk?.(e.data.samples);
+          } else if (e.data.type === 'done' && this._pending) {
+            const resolve = this._pending; this._pending = null;
+            this._onChunk = null;
+            resolve(e.data.samples);
+          }
+        };
+        if (this.micSource) this.micSource.connect(this.capture);
+      });
+    }
+    if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
+    return this.ctx;
   }
 
-  async openMic() {
+  /** Context + worklet ready. Does not require the context to be running. */
+  async init() {
+    this.unlock();
+    await this._ready;
+  }
+
+  /** Audio input devices; labels are empty until the mic permission is granted. */
+  async listMics() {
+    if (!navigator.mediaDevices?.enumerateDevices) return [];
+    const all = await navigator.mediaDevices.enumerateDevices();
+    return all.filter((d) => d.kind === 'audioinput');
+  }
+
+  /**
+   * Open the microphone, optionally a specific device. Browser voice
+   * processing (echo cancellation, noise suppression, automatic gain) is left
+   * on: phones in particular record very quietly without the AGC.
+   */
+  async openMic(deviceId = this.deviceId) {
     await this.init();
-    if (this.stream) return;
-    this.stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true, channelCount: 1 },
-      video: false,
-    });
+    if (this.stream && deviceId === this.deviceId) return;
+    this.closeMic();
+    const audio = { channelCount: { ideal: 1 } };
+    if (deviceId) audio.deviceId = { exact: deviceId };
+    this.stream = await navigator.mediaDevices.getUserMedia({ audio, video: false });
+    this.deviceId = deviceId || '';
     this.micSource = this.ctx.createMediaStreamSource(this.stream);
     this.analyser = this.ctx.createAnalyser();
     this.analyser.fftSize = 512;
     this._level = new Uint8Array(this.analyser.fftSize);
     this.micSource.connect(this.analyser);
-    this.micSource.connect(this.capture);
+    if (this.capture) this.micSource.connect(this.capture);
+  }
+
+  /** Label of the device actually in use, if the browser tells us. */
+  activeMicLabel() {
+    return this.stream?.getAudioTracks()[0]?.label || '';
   }
 
   closeMic() {
@@ -88,7 +125,9 @@ export class Recorder {
    */
   record({ duration, preroll = 1.6, tail = 0.5, monitor = null, monitorGain = 1, onChunk = null }) {
     if (!this.stream) throw new Error('Microphone is not open');
+    if (!this.capture) throw new Error('Audio engine is still loading');
     if (this._pending) throw new Error('A take is already in progress');
+    this.unlock();
     const sr = this.ctx.sampleRate;
     const t0 = this.ctx.currentTime + preroll;
     const startFrame = Math.round(t0 * sr);

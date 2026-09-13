@@ -30,6 +30,18 @@ export async function renderMix(pkg, takes, { sampleRate = 48000, tailPad = 0.75
   return off.startRendering();
 }
 
+/**
+ * Gain that brings a take's peak to `target`, within limits. Phones record
+ * quietly; a shy performer more so. Stored on the take, applied at mix time,
+ * the samples themselves are never touched.
+ */
+export function autoGain(samples, target = 0.85, min = 0.5, max = 8) {
+  let peak = 0;
+  for (let i = 0; i < samples.length; i++) { const v = Math.abs(samples[i]); if (v > peak) peak = v; }
+  if (peak < 1e-3) return 1;
+  return Math.max(min, Math.min(max, target / peak));
+}
+
 /** Peak-normalise a rendered mix in place so quiet phone mics still carry. */
 export function normalize(buffer, target = 0.89) {
   let peak = 0;

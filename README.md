@@ -164,7 +164,29 @@ the offset is applied at mix time and travels with the take.
 
 **Mixdown** is an `OfflineAudioContext` render with every take placed at its
 line's start. It is deterministic, which is what lets every peer render the
-same mix from the same takes.
+same mix from the same takes. Each take also carries a `gain` set when it is
+saved (`autoGain`: peak to -1.4 dBFS, between x0.5 and x8) because phones
+record quietly; it travels with the take and is applied at mix and preview
+time, never to the samples.
+
+**Autoplay policy.** `AudioContext.resume()` can return a promise that never
+settles until the next user gesture, so nothing awaits it. `Recorder.unlock()`
+creates and resumes the context synchronously and is called from every
+click/tap handler and once from the first `pointerdown`/`keydown` on the page.
+That is what lets a phone that has only tapped "Join" play the host's
+scheduled dub later without another gesture, and lets the waveform draw before
+anyone has clicked Record.
+
+**Microphone.** Browser voice processing (echo cancellation, noise suppression,
+automatic gain) is left at the browser defaults; turning it off made Android
+phones record almost silently. A picker in the booth lists input devices (labels
+appear once permission has been granted) so a paired headset mic can be
+spotted and switched.
+
+**Follow along.** A room reads the script in order: everyone opens on the first
+line nobody has recorded, and when a take lands on the line you are looking at,
+you move to the next line a beat and a half later (a checkbox in the booth turns
+this off). Navigating by hand or starting a take cancels the pending move.
 
 Not yet: reassigning a line after recording has started (a player who drops
 out strands their lines until the host re-deals from a fresh lobby), a muxed

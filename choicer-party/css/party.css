@@ -325,3 +325,10 @@ button.big{padding:.75rem 1.4rem;font-size:1rem}
   .studio.in-room{grid-template-areas:"bar" "stage" "lines" "dub";grid-template-rows:auto}
   .room-bar-right{margin-left:0}
 }
+
+/* ---------- r3: mic picker ---------- */
+.mic{display:flex;align-items:center;gap:.5rem}
+.mic select{
+  background:var(--bg);color:var(--ink);border:1px solid var(--line2);border-radius:6px;padding:.3rem .5rem;
+  font:inherit;font-size:.85rem;max-width:16rem;
+}

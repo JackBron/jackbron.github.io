@@ -15,7 +15,7 @@ import {
 } from './package.js';
 import { Recorder } from './recorder.js';
 import { WaveformView } from './waveform.js';
-import { renderMix, normalize } from './mixer.js';
+import { renderMix, normalize, autoGain } from './mixer.js';
 import { audioBufferToWav } from './wav.js';
 import { VideoPlayer } from './video.js';
 
@@ -51,6 +51,7 @@ const state = {
   hostOffset: 0,          // host clock minus ours, ms (player side)
   receiving: { frames: 0, audio: 0, audioTotal: 0 },
   waitTimer: 0,
+  followTimer: 0,
 };
 
 const recorder = new Recorder();
@@ -351,6 +352,7 @@ function renderHostLobby() {
 
 async function startRecordingPhase() {
   if (!isHost() || !state.room) return;
+  recorder.unlock();
   state.roster.hostName = myName();
   state.roster.phase = 'record';
   broadcastRoster();
@@ -387,6 +389,7 @@ async function sendAssets(target) {
 /* -------------------------- player side -------------------------- */
 
 async function joinRoomAs(codeRaw, nameRaw) {
+  recorder.unlock(); // inside the tap, so phones let audio play later without another gesture
   const { Room, normalizeCode, selfId } = await net();
   const code = normalizeCode(codeRaw);
   const name = nameRaw.trim().slice(0, 24);
@@ -511,11 +514,13 @@ function onTakeMsg(buffer, peerId, meta) {
   if (!line) return;
   if (inRoom() && ownerOf(line) && ownerOf(line) !== peerId && peerId !== state.roster.hostId) return; // not theirs to send
   const take = state.net.decodeTake(buffer, meta);
+  const fresh = !state.takes.has(line.id);
   state.takes.set(line.id, take);
   state.mixDirty = true;
   if (!el.studio.hidden) {
     if (state.pkg.lines[state.index] === line) refreshStageTake(line);
     refreshLineList(); refreshTakeControls(); updateDubControls(); renderRoomBar();
+    if (fresh) followAlong(line);
   }
   if (isHost()) renderHostLobby();
   setStatus(`${take.by || nameOf(peerId)} recorded line ${line.order}.`);
@@ -555,9 +560,13 @@ function enterBooth() {
   el.roomBar.hidden = !room;
   el.studio.classList.toggle('in-room', room);
   el.btnPlayAll.hidden = !isHost() || !room;
+  el.followWrap.hidden = !room;
   renderLineList();
-  const first = state.pkg.lines.findIndex(isMine);
+  // A room reads the script in order, so everyone opens on the first line
+  // nobody has recorded yet; solo opens at the top.
+  const first = room ? state.pkg.lines.findIndex((l) => !state.takes.has(l.id)) : 0;
   showLine(first >= 0 ? first : 0);
+  refreshMicList();
   renderRoomBar();
   updateDubControls();
   if (isPlayer()) el.pWait.textContent = '';
@@ -613,6 +622,7 @@ function currentLine() { return state.pkg.lines[state.index]; }
 
 async function showLine(i) {
   const { pkg } = state;
+  clearTimeout(state.followTimer);
   state.index = Math.max(0, Math.min(pkg.lines.length - 1, i));
   const line = currentLine();
 
@@ -693,11 +703,12 @@ function refreshTakeControls() {
 async function toggleRecord() {
   if (state.play === 'recording') { state.session?.stop(); return; }
   if (state.play !== 'idle') return;
+  recorder.unlock();
   const line = currentLine();
   if (!canRecord(line)) return;
   try {
     await recorder.init();
-    if (!recorder.micOpen) { setStatus('Asking for the microphone…'); await recorder.openMic(); }
+    if (!recorder.micOpen) { setStatus('Asking for the microphone…'); await recorder.openMic(); refreshMicList(); }
   } catch (err) {
     console.error(err);
     setStatus(`Microphone unavailable: ${err.message || err}`, true);
@@ -738,10 +749,13 @@ async function toggleRecord() {
   state.live = null; state.liveLen = 0;
   if (take.samples.length > take.sampleRate * 0.15) {
     take.by = myName();
+    take.gain = autoGain(take.samples);
     state.takes.set(line.id, take);
     state.mixDirty = true;
     shareTake(line, take);
-    setStatus(`Take saved for line ${line.order} (${(take.samples.length / take.sampleRate).toFixed(2)}s).`);
+    const boost = take.gain > 1.05 ? `, levelled +${(20 * Math.log10(take.gain)).toFixed(0)} dB` : '';
+    setStatus(`Take saved for line ${line.order} (${(take.samples.length / take.sampleRate).toFixed(2)}s${boost}).`);
+    followAlong(line);
   } else {
     setStatus('Take was too short and was discarded.');
   }
@@ -779,6 +793,7 @@ function onNudge() {
 
 async function playLine(which) {
   if (state.play !== 'idle') return;
+  recorder.unlock();
   const line = currentLine();
   const original = await originalBuffer(line);
   const take = state.takes.get(line.id);
@@ -787,7 +802,7 @@ async function playLine(which) {
 
   const t0 = recorder.now + LEAD;
   if (which === 'original' || which === 'both') recorder.play(original, { at: t0 });
-  if (which === 'take' || which === 'both') recorder.play(recorder.takeBuffer(take), { at: t0, offset: -take.offset });
+  if (which === 'take' || which === 'both') recorder.play(recorder.takeBuffer(take), { at: t0, offset: -take.offset, gain: take.gain ?? 1 });
 
   state.play = 'playing';
   state.t0 = t0;
@@ -830,6 +845,7 @@ async function ensureMix() {
 async function startDub(ctxAt = null) {
   if (!state.takes.size) return;
   if (state.play !== 'idle') stopDub();
+  recorder.unlock();
   await recorder.init();
   const mix = await ensureMix();
   state.play = 'dub';
@@ -912,6 +928,60 @@ function renderRoomBar() {
 }
 
 /* ================================================================== */
+/* Follow along: a room reads the script in order                     */
+
+function followAlong(line) {
+  clearTimeout(state.followTimer);
+  if (!inRoom() || !el.follow.checked) return;
+  if (currentLine() !== line) return;
+  const next = state.index + 1;
+  if (next >= state.pkg.lines.length) return;
+  // A beat to see the tick land, then move on. Cancelled if the viewer moves
+  // or starts something in the meantime.
+  state.followTimer = setTimeout(() => {
+    if (state.play !== 'idle' || currentLine() !== line || el.studio.hidden) return;
+    showLine(next);
+    setStatus(`Line ${line.order} is in. On to line ${line.order + 1}.`);
+  }, 1500);
+}
+
+/* ================================================================== */
+/* Microphone picker                                                  */
+
+async function refreshMicList() {
+  let mics = [];
+  try { mics = await recorder.listMics(); } catch { /* no enumerate */ }
+  const sel = el.micSelect;
+  const current = recorder.deviceId;
+  sel.innerHTML = '';
+  const def = document.createElement('option');
+  def.value = ''; def.textContent = 'default microphone';
+  sel.appendChild(def);
+  for (const m of mics) {
+    if (!m.deviceId || m.deviceId === 'default') continue;
+    const o = document.createElement('option');
+    o.value = m.deviceId;
+    o.textContent = m.label || `microphone ${sel.options.length}`;
+    sel.appendChild(o);
+  }
+  sel.value = current && [...sel.options].some((o) => o.value === current) ? current : '';
+  const active = recorder.activeMicLabel();
+  sel.title = active ? `using: ${active}` : 'labels appear after the first recording grants access';
+}
+
+async function onMicChange() {
+  recorder.unlock();
+  try {
+    await recorder.openMic(el.micSelect.value);
+    await refreshMicList();
+    setStatus(`Microphone: ${recorder.activeMicLabel() || 'default'}.`);
+  } catch (err) {
+    console.error(err);
+    setStatus(`Could not open that microphone: ${err.message || err}`, true);
+  }
+}
+
+/* ================================================================== */
 /* Animation loop                                                     */
 
 // requestAnimationFrame stops in a background tab and can stall when the
@@ -990,7 +1060,7 @@ el.joinCode.addEventListener('input', () => { el.joinCode.value = el.joinCode.va
 
 // lobby (host)
 el.btnOpenRoom.addEventListener('click', () => openRoom().catch((err) => { console.error(err); el.btnOpenRoom.disabled = false; setStatus(`Could not open a room: ${err.message || err}`, true); }));
-el.btnSolo.addEventListener('click', () => { state.mode = 'solo'; state.selfId = null; enterBooth(); setStatus('Solo booth. Pick a line and hit Record.'); });
+el.btnSolo.addEventListener('click', () => { recorder.unlock(); state.mode = 'solo'; state.selfId = null; enterBooth(); setStatus('Solo booth. Pick a line and hit Record.'); });
 el.hostPlays.addEventListener('change', () => { state.roster.hostPlays = el.hostPlays.checked; dealIfAuto(); broadcastRoster(); renderHostLobby(); });
 el.hostName.addEventListener('change', () => { state.roster.hostName = myName(); broadcastRoster(); renderHostLobby(); });
 el.btnRedeal.addEventListener('click', () => { state.manualAssign = false; dealIfAuto(); broadcastRoster(); renderHostLobby(); });
@@ -1005,6 +1075,15 @@ el.btnPlayBoth.addEventListener('click', () => playLine('both'));
 el.btnStopPlay.addEventListener('click', stopPlayback);
 el.btnDeleteTake.addEventListener('click', deleteTake);
 el.nudge.addEventListener('input', onNudge);
+el.micSelect.addEventListener('change', onMicChange);
+navigator.mediaDevices?.addEventListener?.('devicechange', () => { if (!el.studio.hidden) refreshMicList(); });
+
+// Autoplay policy: the first tap or key anywhere creates and resumes the
+// AudioContext, so later scheduled playback (a host's "play for everyone")
+// is allowed to make sound without another gesture.
+for (const evt of ['pointerdown', 'keydown', 'touchend']) {
+  document.addEventListener(evt, () => recorder.unlock(), { passive: true, capture: true });
+}
 el.btnPrev.addEventListener('click', () => showLine(state.index - 1));
 el.btnNext.addEventListener('click', () => showLine(state.index + 1));
 el.btnPlayDub.addEventListener('click', () => startDub());
