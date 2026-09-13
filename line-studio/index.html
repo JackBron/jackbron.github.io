@@ -435,7 +435,7 @@ textarea.paste{width:100%;min-height:210px;background:var(--panel2);border:1px s
   <span class="dot" id="sdot"></span>
   <span id="sctx">no recipe loaded</span>
   <span class="msg" id="smsg"></span>
-  <span class="rev">LINE STUDIO&nbsp;&nbsp;r13</span>
+  <span class="rev">LINE STUDIO&nbsp;&nbsp;r15</span>
 </div>
 
 <input type="file" id="fileIn" accept=".json,application/json" multiple hidden>
@@ -443,7 +443,7 @@ textarea.paste{width:100%;min-height:210px;background:var(--panel2);border:1px s
 <script>
 "use strict";
 /* =====================================================================
-   LINE STUDIO r13 — standalone cooking mode
+   LINE STUDIO r15 — standalone cooking mode
    Loads recipe JSON (single recipe, array, or cookbook) and runs it.
    Library, week plan, and theme persist in localStorage; the exported
    cookbook file carries all of it as the portable backup.
@@ -451,6 +451,10 @@ textarea.paste{width:100%;min-height:210px;background:var(--panel2);border:1px s
    line, and a Combined / By-recipe view that the text export follows.
    r13: "shop": false keeps non-purchasable ingredients (reserved pasta water,
    water for boiling) out of the shopping list without hiding them from the cook.
+   r14: large aggregated amounts upshift to a sane unit (2 2/3 cups, not 128
+   tsp); plural forms for sheet, sac, packet and fillet.
+   r15: thirds count as measurable cup amounts, so 1/3 cup survives a round trip
+   through the shopping list instead of coming back as 5 1/3 Tbsp.
    ===================================================================== */
 
 const $ = (s,r)=> (r||document).querySelector(s);
@@ -481,7 +485,7 @@ function uid(p){ return (p||'x')+Math.random().toString(36).slice(2,8); }
 const METRIC = new Set(['g','kg','mg','ml','l','L']);
 const UNIT_LABEL = {g:'g',kg:'kg',mg:'mg',ml:'ml',l:'L',tsp:'tsp',tbsp:'Tbsp',cup:'cup',fl_oz:'fl oz',
   oz:'oz',lb:'lb',pinch:'pinch',clove:'clove',slice:'slice',sprig:'sprig',can:'can',stick:'stick',qt:'qt',pt:'pt',gal:'gal',package:'package'};
-const PLURAL = {cup:'cups',pinch:'pinches',clove:'cloves',slice:'slices',sprig:'sprigs',can:'cans',stick:'sticks',package:'packages'};
+const PLURAL = {cup:'cups',pinch:'pinches',clove:'cloves',slice:'slices',sprig:'sprigs',can:'cans',stick:'sticks',package:'packages',sheet:'sheets',sac:'sacs',packet:'packets',fillet:'fillets'};
 const FRACTS = [[.0625,'1/16'],[.125,'⅛'],[.1875,'3/16'],[.25,'¼'],[.333333,'⅓'],[.375,'⅜'],[.5,'½'],
   [.625,'⅝'],[.666667,'⅔'],[.75,'¾'],[.875,'⅞']];
 
@@ -522,15 +526,22 @@ function nameOf(ing, mult){
 }
 /* keep scaled amounts in a unit a cook can actually measure:
    1/8 cup -> 2 Tbsp, 2/3 Tbsp -> 2 tsp, 1500 g -> 1.5 kg */
-const nearMul=(v,m)=>Math.abs(v/m - Math.round(v/m)) < 1e-9;
+/* Tolerance is deliberately loose: a third of a cup can only ever be written in
+   JSON as 0.333333, so an exact-equality test never recognises it as a third. */
+const nearMul=(v,m)=>Math.abs(v/m - Math.round(v/m)) < 1e-3;
 function normUnit(v,u){
   for(let i=0;i<3;i++){
     if(u==='cup'  && v<0.25){ v*=16;   u='tbsp'; continue; }
     if(u==='tbsp' && v<1)   { v*=3;    u='tsp';  continue; }
-    /* only step up when the bigger unit lands on something measurable:
-       6 tsp -> 2 Tbsp, but 4 tsp stays 4 tsp rather than 1 1/3 Tbsp */
-    if(u==='tsp'  && v>=3 && nearMul(v,0.75)) { v/=3;  u='tbsp'; continue; }
-    if(u==='tbsp' && v>=8 && nearMul(v,4))    { v/=16; u='cup';  continue; }
+    /* Normally only step up when the bigger unit lands on something measurable:
+       6 tsp -> 2 Tbsp, but 4 tsp stays 4 tsp rather than 1 1/3 Tbsp.
+       Past the point where the small unit stops being useful, step up anyway
+       even onto an awkward fraction — a week's aggregated flour is 2.67 cups,
+       not 128 tsp. Thresholds are 1/4 cup of tsp and a full cup of Tbsp. */
+    if(u==='tsp'  && v>=3 && (nearMul(v,0.75) || v>=12)) { v/=3;  u='tbsp'; continue; }
+    /* measuring cups come in quarters AND thirds, so 5 1/3 Tbsp is a third of a
+       cup and should say so; 4 Tbsp stays 4 Tbsp, 10 Tbsp stays 10 Tbsp */
+    if(u==='tbsp' && v>=5 && (nearMul(v,4) || nearMul(v,16/3) || v>=12)) { v/=16; u='cup'; continue; }
     if(u==='lb'   && v<1)   { v*=16;   u='oz';   continue; }
     if(u==='l'    && v<1)   { v*=1000; u='ml';   continue; }
     if(u==='kg'   && v<1)   { v*=1000; u='g';    continue; }
