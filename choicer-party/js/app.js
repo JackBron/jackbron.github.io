@@ -38,6 +38,7 @@ const state = {
   windowLen: 0,
   live: null, liveLen: 0, // take being recorded, drawn as it grows
   mix: null, mixDirty: true,
+  backingBuffer: null,
   videoStarted: false,
 
   // room
@@ -104,7 +105,7 @@ function nameOf(peerId) {
 }
 function ownerOf(line) { return inRoom() ? state.roster.assignments[line.id] || null : state.selfId; }
 function isMine(line) { return !inRoom() || ownerOf(line) === state.selfId; }
-function canRecord(line) { return isMine(line) && !!line.wav; }
+function canRecord(line) { return isMine(line) && !!line.audio; }
 function myLines() { return state.pkg ? state.pkg.lines.filter(isMine) : []; }
 function takesFor(peerId) {
   return state.pkg.lines.filter((l) => state.roster.assignments[l.id] === peerId);
@@ -124,7 +125,7 @@ async function loadFrom(entriesPromise, label) {
     console.error(err);
     el.loadError.textContent = err.message || String(err);
     el.loadError.hidden = false;
-    setStatus(`Could not load ${label}.`, true);
+    setStatus(`Could not load ${label}: ${err.message || err}`, true);
   }
 }
 
@@ -146,9 +147,11 @@ function showPackInfo(pkg) {
   el.packTitle.textContent = pkg.title;
   const bits = [];
   if (pkg.subtitle) bits.push(pkg.subtitle);
+  else if (pkg.readme) bits.push(pkg.readme);
   if (pkg.authors?.length) bits.push(`by ${pkg.authors.join(', ')}`);
   bits.push(`${pkg.lines.length} line${pkg.lines.length === 1 ? '' : 's'}`);
   bits.push(pkg.characters.length === 1 ? '1 character' : `${pkg.characters.length} characters`);
+  if (pkg.hasBacking) bits.push('backing track');
   el.packMeta.textContent = bits.join(' · ');
   if (pkg.icon) { el.packIcon.src = pkg.url(pkg.icon); el.packIcon.hidden = false; } else el.packIcon.hidden = true;
   el.packInfo.hidden = false;
@@ -180,7 +183,7 @@ function resetAll() {
   Object.assign(state, {
     mode: null, pkg: null, index: 0, room: null, code: '', name: '',
     roster: { hostId: null, hostName: '', hostPlays: true, players: {}, assignments: {}, phase: 'lobby' },
-    manualAssign: false, hostOffset: 0, mix: null, mixDirty: true,
+    manualAssign: false, hostOffset: 0, mix: null, mixDirty: true, backingBuffer: null,
     receiving: { frames: 0, audio: 0, audioTotal: 0 },
   });
   state.takes.clear(); state.originals.clear();
@@ -219,6 +222,7 @@ function wireRoom(room) {
   room.on('pack', onPack);
   room.on('frame', onFrame);
   room.on('audio', onAudio);
+  room.on('backing', onBacking);
   room.on('take', onTakeMsg);
   room.on('progress', onProgressMsg);
   room.on('play', onPlayMsg);
@@ -368,14 +372,22 @@ async function sendAssets(target) {
   const peers = target ? [target] : room.peers();
   if (!peers.length) return;
   await room.send('pack', summarizePackage(pkg), target || undefined);
+  const sentImages = new Set();
   for (const l of pkg.lines) {
-    if (l.image) await room.send('frame', new Uint8Array(await l.image.arrayBuffer()), target || undefined, { lineId: l.id });
+    if (!l.image) continue;
+    const key = (l.imageName || l.id).toLowerCase();
+    if (sentImages.has(key)) continue; // shared character image: the receiver fans it out
+    sentImages.add(key);
+    await room.send('frame', new Uint8Array(await l.image.arrayBuffer()), target || undefined, { lineId: l.id });
   }
   for (const l of pkg.lines) {
     const owner = roster.assignments[l.id];
     if (!owner || owner === state.selfId) continue;
     if (target && owner !== target) continue;
-    await room.send('audio', new Uint8Array(await l.wav.arrayBuffer()), owner, { lineId: l.id });
+    await room.send('audio', new Uint8Array(await l.audio.arrayBuffer()), owner, { lineId: l.id });
+  }
+  if (pkg.backing) {
+    await room.send('backing', new Uint8Array(await pkg.backing.arrayBuffer()), target || undefined, { name: pkg.backingName });
   }
   // a late joiner also needs the takes recorded so far
   if (target) {
@@ -449,7 +461,7 @@ function onPack(summary, peerId) {
   const old = state.pkg;
   state.pkg = packageFromSummary(summary);
   // keep any assets that already arrived (frames can outrun the summary on a reconnect)
-  if (old) for (const l of old.lines) { const n = state.pkg.lineById(l.id); if (n) { n.image = l.image; n.imageUrl = l.imageUrl; n.wav = l.wav; } }
+  if (old) for (const l of old.lines) { const n = state.pkg.lineById(l.id); if (n) { n.image = l.image; n.imageUrl = l.imageUrl; n.audio = l.audio; n.audioBuffer = l.audioBuffer; } }
   showPackInfo(state.pkg);
   state.mixDirty = true;
   renderPlayerLobby();
@@ -463,6 +475,14 @@ function onFrame(buffer, peerId, meta) {
   if (!line) return;
   line.image = new Blob([buffer], { type: 'image/png' });
   line.imageUrl = state.pkg.url(line.image);
+  // native packs share one image per character: fill in every line that uses it
+  for (const other of state.pkg.lines) {
+    if (other !== line && !other.imageUrl && other.imageName && other.imageName === line.imageName) {
+      other.image = line.image; other.imageUrl = line.imageUrl;
+      const th = el.lineList.querySelector(`[data-line="${other.id}"] img`);
+      if (th) th.src = other.imageUrl;
+    }
+  }
   state.receiving.frames++;
   el.receiving.textContent = '';
   if (!el.studio.hidden) {
@@ -476,12 +496,22 @@ async function onAudio(buffer, peerId, meta) {
   if (!isPlayer() || !state.pkg) return;
   const line = state.pkg.lineById(meta?.lineId);
   if (!line) return;
-  line.wav = new Blob([buffer], { type: 'audio/wav' });
+  line.audio = new Blob([buffer], { type: 'audio/wav' });
   state.originals.delete(line.id);
   state.receiving.audio++;
   el.receiving.textContent = '';
   if (!el.studio.hidden && state.pkg.lines[state.index] === line) showLine(state.index);
   renderPlayerLobby();
+}
+
+function onBacking(buffer, peerId, meta) {
+  if (!isPlayer() || !state.pkg) return;
+  state.pkg.backing = new Blob([buffer], { type: /\.wav$/i.test(meta?.name || '') ? 'audio/wav' : 'audio/mpeg' });
+  state.pkg.hasBacking = true;
+  state.backingBuffer = null;
+  state.mixDirty = true;
+  el.receiving.textContent = '';
+  showPackInfo(state.pkg);
 }
 
 function renderPlayerLobby() {
@@ -650,9 +680,9 @@ async function showLine(i) {
 }
 
 async function originalBuffer(line) {
-  if (!line.wav) return null;
+  if (!line.audio) return null;
   if (state.originals.has(line.id)) return state.originals.get(line.id);
-  const buf = await recorder.decode(line.wav); // offline decoder: no gesture needed
+  const buf = line.audioBuffer || await recorder.decode(line.audio); // offline decoder: no gesture needed
   state.originals.set(line.id, buf);
   return buf;
 }
@@ -676,7 +706,7 @@ function refreshTakeControls() {
   const take = state.takes.get(line.id);
   const busy = state.play !== 'idle';
   const mine = isMine(line);
-  const hasOriginal = !!line.wav;
+  const hasOriginal = !!line.audio;
   el.btnPlayTake.disabled = !take || busy;
   el.btnPlayBoth.disabled = !take || !hasOriginal || busy;
   el.btnPlayOrig.disabled = !hasOriginal || busy;
@@ -843,7 +873,12 @@ function updateDubControls() {
 async function ensureMix() {
   if (state.mix && !state.mixDirty) return state.mix;
   setStatus('Rendering mix…');
-  const buf = await renderMix(state.pkg, state.takes, { sampleRate: recorder.sampleRate });
+  let backing = null;
+  if (state.pkg.backing) {
+    state.backingBuffer ||= await recorder.decode(state.pkg.backing);
+    backing = state.backingBuffer;
+  }
+  const buf = await renderMix(state.pkg, state.takes, { sampleRate: recorder.sampleRate, backing });
   state.mix = normalize(buf);
   state.mixDirty = false;
   return state.mix;
@@ -930,7 +965,7 @@ function renderRoomBar() {
   el.roomProgress.textContent = `${state.takes.size} / ${assigned} recorded`;
   if (isPlayer()) {
     const mine = myLines().length;
-    const got = myLines().filter((l) => l.wav).length;
+    const got = myLines().filter((l) => l.audio).length;
     const frames = state.pkg.lines.filter((l) => l.imageUrl).length;
     el.receiving.textContent = (got < mine || frames < state.pkg.lines.length) ? `receiving… frames ${frames}/${state.pkg.lines.length}, lines ${got}/${mine}` : '';
   }

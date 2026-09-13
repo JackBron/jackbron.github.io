@@ -1,16 +1,16 @@
-// Parser for the Godot-style ConfigFile .ini cards a Choicer Voicer package
-// ships per line:
+// Parser for the Godot-style ConfigFile cards a Choicer Voicer package ships
+// per line (as .txt in the game's native layout, .ini in exports):
 //
 //   [data]
-//   caption="And what he said is, \"you are a celebrity!\""
-//   image="001_line_01.png"
-//   dub_timestamps=[0.000]
-//   dub_characters=["Kanye"]
 //
-// Values are Godot Variant literals. Every value seen in the wild (quoted
-// strings with backslash escapes, numbers, bools, arrays of those) is also
-// valid JSON, so JSON.parse does the heavy lifting with a plain-string
-// fallback for anything exotic.
+//   caption="“Shut up! Just shut up, you idiot!”"
+//   image="woody.png"
+//   dub_timestamps=[07.770]
+//   dub_characters=["Woody"]
+//
+// Values are Godot Variant literals. Most are valid JSON, but Godot happily
+// writes numbers with a leading zero (`05.865`), which JSON rejects, so arrays
+// and scalars get a lenient second pass.
 
 export function parseIni(text) {
   const root = {};
@@ -33,11 +33,46 @@ export function parseIni(text) {
   return root;
 }
 
-function parseValue(s) {
+export function parseValue(s) {
   if (s === '') return '';
-  try { return JSON.parse(s); } catch { /* not JSON, fall through */ }
-  if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) return s.slice(1, -1);
+  try { return JSON.parse(s); } catch { /* not strict JSON, fall through */ }
+  if (s.startsWith('[') && s.endsWith(']')) return splitTopLevel(s.slice(1, -1)).map(parseScalar);
+  return parseScalar(s);
+}
+
+function parseScalar(s) {
+  s = s.trim();
+  if (s === '') return '';
+  try { return JSON.parse(s); } catch { /* fall through */ }
+  if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) return s.slice(1, -1).replace(/\\(.)/g, '$1');
+  if (/^[-+]?\d+(\.\d+)?([eE][-+]?\d+)?$/.test(s)) return Number(s);
+  if (s === 'true') return true;
+  if (s === 'false') return false;
+  if (s === 'null') return null;
   return s;
+}
+
+/** Split on commas that are not inside a quoted string. */
+function splitTopLevel(s) {
+  const out = [];
+  let cur = '';
+  let quoted = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (quoted) {
+      cur += c;
+      if (c === '\\' && i + 1 < s.length) { cur += s[++i]; continue; }
+      if (c === '"') quoted = false;
+    } else if (c === '"') {
+      quoted = true; cur += c;
+    } else if (c === ',') {
+      out.push(cur); cur = '';
+    } else {
+      cur += c;
+    }
+  }
+  if (cur.trim() !== '' || out.length) out.push(cur);
+  return out;
 }
 
 /** The `[data]` table of a card, or the whole file when it has no sections. */

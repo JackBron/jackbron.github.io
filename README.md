@@ -102,13 +102,28 @@ choicer-party/
   js/app.js                   UI wiring for solo / host / player
 ```
 
-**Package format.** A flat folder: `_pack_info.ini` (title, authors, icon),
-one `NNN_line_NN.ini` / `.png` / `.wav` triple per line (caption, 640x360 frame,
-the original audio for that line at 48 kHz), an optional `dub_markers.json`
-index with start/end times, and an optional `dub_video.ogv`. The `.ini` fields
-`dub_timestamps` and `dub_characters` are arrays, so one card can carry several
-speakers. The `.ini` cards are the source of truth; the JSON only supplies
-timing when present.
+**Package format.** Two layouts exist, both flat folders, both accepted:
+
+*Native* (what the game itself writes; the "Woody and Buzz Argue" pack):
+`_pack_info.ini` (title, icon, authors, `readme`, `preselected_dub_characters`),
+one `NN_character.txt` card per line (Godot ConfigFile: `caption`, `image`,
+`dub_timestamps`, `dub_characters`) with a matching `NN_character.mp3`, one
+`character.png` shared by all of that character's cards, `_backing_track.mp3`
+(music and effects with the voices removed) and `dub_video.ogv`. Line numbers
+are *per character*, so `05_woody` at 33 s comes before `05_buzz` at 35 s: lines
+are ordered by timestamp, never by filename.
+
+*Export* (from converter tools; the "Kanye Gaga Rant" pack): `_pack_info.ini`,
+one `NNN_line_NN.ini` / `.png` / `.wav` triple per line, a `dub_markers.json`
+index with start/end times, `dub_video.ogv`, no backing track.
+
+`package.js` treats cards as the source of truth in both: any `.ini`/`.txt`
+card, any audio next to it (`.wav` reads its header for the duration, anything
+else is decoded once with an `OfflineAudioContext` and the buffer kept), any
+image (`image=` in the card, else `stem.png`). Godot writes numbers with a
+leading zero (`[05.865]`), which JSON rejects, so `ini.js` has a lenient pass
+for arrays and scalars. When a backing track exists it goes under the takes in
+the mix (at 0.8) and is sent to every player so their local mix matches.
 
 **The video is Theora, and no browser decodes Theora any more.** Chrome and
 Edge removed it in 2024, Firefox 130 followed, Safari never had it. Worse,
@@ -123,8 +138,10 @@ never get the video; they see a slideshow of the line frames.
 **Packages are never committed.** They contain the clip itself. The host reads
 them from disk (folder pick, drag-drop, or `.zip`) or from any URL serving the
 folder with CORS; `?pkg=<base-url>` loads one on open, which is how it is
-tested locally. Players receive only the PNG frames and the WAVs of their own
-lines, over WebRTC.
+tested locally. A static host has no directory listing, so a URL pack needs
+either an `index.json` (a JSON array of its file names) or, for export packs,
+the `dub_markers.json`. Players receive only the images, the backing track and
+the audio of their own lines, over WebRTC.
 
 **Rooms** run on [Trystero](https://github.com/dmotz/trystero) 0.25 (pinned,
 from jsDelivr): peers meet through public Nostr relays, then talk directly over
@@ -135,8 +152,9 @@ WebRTC data channels. Nothing is hosted by us. The host is authoritative:
 | `hello` | player | host | `{name}` on peer join |
 | `roster` | host | all | host id/name, players, `assignments` (lineId -> peerId), phase |
 | `pack` | host | all | package summary without blobs |
-| `frame` | host | all | PNG bytes, metadata `{lineId}` |
-| `audio` | host | the line's performer | WAV bytes, metadata `{lineId}` |
+| `frame` | host | all | image bytes, metadata `{lineId}`; a shared character image is sent once and fanned out by the receiver |
+| `audio` | host | the line's performer | original line audio, metadata `{lineId}` |
+| `backing` | host | all | backing track bytes |
 | `take` | anyone | all | Int16 mono PCM, metadata `{lineId, sampleRate, offset, by, ...}` |
 | `progress` | performer | all | `{lineId, status:'deleted'}` |
 | `clock` | player <-> host | | NTP-style offset estimate, best of six round trips |

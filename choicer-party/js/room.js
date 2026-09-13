@@ -33,7 +33,7 @@ export class Room {
     this.handlers = new Map();
     this.progressHandlers = new Map();
     this.actions = {};
-    for (const name of ['hello', 'roster', 'pack', 'frame', 'audio', 'take', 'progress', 'clock', 'phase', 'play', 'stop']) {
+    for (const name of ['hello', 'roster', 'pack', 'frame', 'audio', 'backing', 'take', 'progress', 'clock', 'play', 'stop']) {
       // Trystero 0.25 returns { send, onMessage, onReceiveProgress } where the
       // two handlers are assignable properties; earlier releases returned a
       // [send, onMessage, onProgress] tuple of functions. Support both.

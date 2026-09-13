@@ -9,9 +9,23 @@
  * @param {object} opts
  * @returns {Promise<AudioBuffer>} mono mix
  */
-export async function renderMix(pkg, takes, { sampleRate = 48000, tailPad = 0.75 } = {}) {
-  const length = Math.max(1, Math.ceil((pkg.totalDuration + tailPad) * sampleRate));
+export async function renderMix(pkg, takes, { sampleRate = 48000, tailPad = 0.75, backing = null, backingGain = 0.8 } = {}) {
+  const total = Math.max(pkg.totalDuration, backing ? backing.duration : 0);
+  const length = Math.max(1, Math.ceil((total + tailPad) * sampleRate));
   const off = new OfflineAudioContext(1, length, sampleRate);
+
+  // Native packs ship the clip's music and effects with the voices removed;
+  // the takes sit on top of it.
+  if (backing) {
+    const b = off.createBuffer(backing.numberOfChannels, backing.length, backing.sampleRate);
+    for (let c = 0; c < backing.numberOfChannels; c++) b.copyToChannel(backing.getChannelData(c), c);
+    const src = off.createBufferSource();
+    src.buffer = b;
+    const g = off.createGain();
+    g.gain.value = backingGain;
+    src.connect(g).connect(off.destination);
+    src.start(0);
+  }
 
   for (const [lineId, take] of takes) {
     const line = pkg.lineById(lineId);

@@ -1,15 +1,24 @@
 // Loads a Choicer Voicer package into one in-memory model, whatever shape it
 // arrives in: a folder picked or dropped, a .zip, or a base URL.
 //
-// A package is a flat directory:
-//   _pack_info.ini            title / subtitle / icon / authors
-//   NNN_line_NN.ini/.png/.wav one card per line: caption, frame, original audio
-//   dub_markers.json          optional flattened index with start/end times
-//   dub_video.ogv             optional full clip (Theora, so Safari cannot play it)
+// Two layouts exist in the wild, both flat directories:
 //
-// The .ini cards are treated as the source of truth (the game reads them);
-// dub_markers.json is used for timing when present and the WAV header's
-// duration fills in when it is not.
+//   native (the game's own):
+//     _pack_info.ini              title / icon / authors / readme / preselected_dub_characters
+//     NN_character.txt            Godot ConfigFile card: caption, image, dub_timestamps, dub_characters
+//     NN_character.mp3            the original audio of that line
+//     character.png               one image per character, shared by its cards
+//     _backing_track.mp3          music + effects with the voices removed
+//     dub_video.ogv               the clip (Theora)
+//
+//   export (seen from converter tools):
+//     _pack_info.ini, NNN_line_NN.ini/.png/.wav per line, dub_markers.json, dub_video.ogv
+//
+// Cards are the source of truth. Numbering is per character in the native
+// layout, so lines are ordered by their timestamp, not their filename. Any
+// card extension (.ini/.txt), any audio (.wav/.mp3/.ogg/...) and any image
+// (.png/.jpg/.webp) is accepted; durations come from the WAV header when there
+// is one and from decoding otherwise.
 
 import { iniData } from './ini.js';
 import { parseWavHeader } from './wav.js';
@@ -17,7 +26,20 @@ import { readZip } from './zip.js';
 
 const PACK_INFO = '_pack_info.ini';
 const MARKERS = 'dub_markers.json';
-const VIDEO_EXT = /\.(ogv|ogg|webm|mp4|m4v|mov)$/i;
+const INDEX = 'index.json';
+const VIDEO_EXT = /\.(ogv|webm|mp4|m4v|mov)$/i;
+const CARD_EXT = /\.(ini|txt)$/i;
+const AUDIO_EXTS = ['wav', 'mp3', 'ogg', 'oga', 'opus', 'flac', 'm4a', 'aac', 'weba'];
+const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'webp', 'gif'];
+const BACKING = /^_backing_track\.(mp3|wav|ogg|oga|opus|flac|m4a)$/i;
+
+// Durations of non-WAV audio come from decoding; OfflineAudioContext is not
+// subject to the autoplay policy, so this works before any user gesture.
+let decoder = null;
+async function decodeBlob(blob) {
+  decoder ??= new OfflineAudioContext(1, 1, 48000);
+  return decoder.decodeAudioData(await blob.arrayBuffer());
+}
 
 /* ------------------------------------------------------------------ */
 /* Entry sources. Each yields [{ path, blob(): Promise<Blob> }].       */
@@ -68,17 +90,26 @@ export async function entriesFromUrl(base) {
     if (!r.ok) throw new Error(`${name}: HTTP ${r.status}`);
     return r.text();
   };
-  const markers = JSON.parse(await fetchText(MARKERS));
-  const names = new Set([PACK_INFO, MARKERS]);
-  for (const m of markers.markers || []) {
-    const stem = m.filename.replace(/\.wav$/i, '');
-    names.add(`${stem}.ini`); names.add(`${stem}.wav`); names.add(`${stem}.png`);
+  // A static host has no directory listing, so accept either an index.json
+  // (a JSON array of file names) or, for export-layout packs, dub_markers.json.
+  const names = new Set([PACK_INFO]);
+  let listed = null;
+  try { const j = JSON.parse(await fetchText(INDEX)); if (Array.isArray(j)) listed = j; } catch { /* no index */ }
+  if (listed) {
+    for (const n of listed) if (typeof n === 'string' && !n.endsWith('/')) names.add(n.replace(/^.*\//, ''));
+  } else {
+    const markers = JSON.parse(await fetchText(MARKERS));
+    names.add(MARKERS);
+    for (const m of markers.markers || []) {
+      const stem = m.filename.replace(/\.wav$/i, '');
+      names.add(`${stem}.ini`); names.add(`${stem}.wav`); names.add(`${stem}.png`);
+    }
+    if (markers.hasDubVideo) names.add('dub_video.ogv');
+    try {
+      const info = iniData(await fetchText(PACK_INFO));
+      if (info.icon) names.add(info.icon);
+    } catch { /* icon optional */ }
   }
-  if (markers.hasDubVideo) names.add('dub_video.ogv');
-  try {
-    const info = iniData(await fetchText(PACK_INFO));
-    if (info.icon) names.add(info.icon);
-  } catch { /* icon optional */ }
   return Array.from(names).map((name) => ({
     path: name,
     blob: async () => {
@@ -94,86 +125,119 @@ export async function entriesFromUrl(base) {
 
 export async function buildPackage(entries) {
   const byName = locateRoot(entries);
+  const lower = new Map();
+  for (const [n, e] of byName) lower.set(n.toLowerCase(), e);
+  const get = (name) => (name ? lower.get(String(name).toLowerCase()) : undefined);
+  const names = Array.from(byName.keys());
 
-  const infoEntry = byName.get(PACK_INFO);
+  const infoEntry = get(PACK_INFO) || names.map((n) => get(n)).find((e) => /^_pack_info\.(ini|txt)$/i.test(e.path.split('/').pop()));
   const info = infoEntry ? iniData(await (await infoEntry.blob()).text()) : {};
 
   let markers = null;
-  if (byName.has(MARKERS)) {
-    try { markers = JSON.parse(await (await byName.get(MARKERS).blob()).text()); } catch { markers = null; }
+  if (get(MARKERS)) {
+    try { markers = JSON.parse(await (await get(MARKERS).blob()).text()); } catch { markers = null; }
   }
   const markerByStem = new Map();
-  for (const m of markers?.markers || []) markerByStem.set(m.filename.replace(/\.wav$/i, ''), m);
+  for (const m of markers?.markers || []) markerByStem.set(m.filename.replace(/\.[^.]+$/, '').toLowerCase(), m);
 
-  const cardNames = Array.from(byName.keys())
-    .filter((n) => /\.ini$/i.test(n) && n !== PACK_INFO)
+  const cardNames = names
+    .filter((n) => CARD_EXT.test(n) && !/^_pack_info\./i.test(n) && !/^readme/i.test(n))
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  if (!cardNames.length) throw new Error('No line cards (*.ini) found in this package');
+  if (!cardNames.length) throw new Error('No line cards found: expected NN_character.txt (native) or NNN_line_NN.ini (export) files next to _pack_info.ini');
 
   const lines = [];
+  const skipped = [];
   for (const name of cardNames) {
-    const stem = name.replace(/\.ini$/i, '');
-    const card = iniData(await (await byName.get(name).blob()).text());
-    const wavEntry = byName.get(`${stem}.wav`);
-    if (!wavEntry) continue; // a card with no audio is not a dub line
-    const wav = await wavEntry.blob();
-    const wavInfo = parseWavHeader(await wav.slice(0, 8192).arrayBuffer());
+    const stem = name.replace(CARD_EXT, '');
+    let card;
+    try { card = iniData(await (await get(name).blob()).text()); } catch { skipped.push(name); continue; }
+    if (card.caption == null && card.dub_timestamps == null) { skipped.push(name); continue; } // some other text file
 
-    const imageName = card.image || `${stem}.png`;
-    const imageEntry = byName.get(imageName) ?? byName.get(`${stem}.png`);
-    const image = imageEntry ? await imageEntry.blob() : null;
+    const audioName = AUDIO_EXTS.map((e) => `${stem}.${e}`).find((n) => get(n));
+    if (!audioName) { skipped.push(name); continue; }
+    const audio = await get(audioName).blob();
+
+    let duration;
+    let audioBuffer = null;
+    if (/\.wav$/i.test(audioName)) {
+      duration = parseWavHeader(await audio.slice(0, 8192).arrayBuffer()).duration;
+    } else {
+      audioBuffer = await decodeBlob(audio);
+      duration = audioBuffer.duration;
+    }
+
+    const imageName = (card.image && get(card.image) ? card.image : null)
+      ?? IMAGE_EXTS.map((e) => `${stem}.${e}`).find((n) => get(n))
+      ?? null;
+    const image = imageName ? await get(imageName).blob() : null;
 
     const timestamps = toArray(card.dub_timestamps).map(Number).filter((n) => !Number.isNaN(n));
     const characters = toArray(card.dub_characters).map(String).filter(Boolean);
-    const marker = markerByStem.get(stem);
+    const marker = markerByStem.get(stem.toLowerCase());
 
-    const start = marker?.start ?? timestamps[0] ?? null;
-    const duration = wavInfo.duration;
+    const start = marker?.start ?? (timestamps.length ? Math.min(...timestamps) : null);
     const end = marker?.end ?? (start != null ? start + duration : null);
 
     lines.push({
       id: stem,
-      order: lines.length + 1,
+      file: name,
       caption: String(card.caption ?? marker?.caption ?? ''),
       characters: characters.length ? characters : [marker?.character || 'Unknown'],
       timestamps,
       start, end, duration,
-      image, wav, wavInfo,
+      image, imageName, audio, audioName, audioBuffer,
     });
   }
-  if (!lines.length) throw new Error('No lines with audio found in this package');
+  if (!lines.length) throw new Error(`Found ${cardNames.length} card file(s) but none had a matching audio file (${AUDIO_EXTS.join('/')})`);
 
   // Cards with no timing information fall back to laying lines end to end.
   let cursor = 0;
   for (const l of lines) {
     if (l.start == null) { l.start = cursor; l.end = cursor + l.duration; }
-    cursor = l.end;
+    cursor = Math.max(cursor, l.end);
   }
+  // Native packs number lines per character, so the read order is by time.
+  lines.sort((a, b) => (a.start - b.start) || a.file.localeCompare(b.file, undefined, { numeric: true }));
+  lines.forEach((l, i) => { l.order = i + 1; });
 
-  const characters = [];
+  const characters = toArray(info.preselected_dub_characters).map(String).filter(Boolean);
   for (const l of lines) for (const c of l.characters) if (!characters.includes(c)) characters.push(c);
 
-  const iconEntry = info.icon ? byName.get(info.icon) : null;
-  const videoName = Array.from(byName.keys()).find((n) => VIDEO_EXT.test(n)) || null;
+  const iconEntry = info.icon ? get(info.icon) : null;
+  const videoName = names.find((n) => VIDEO_EXT.test(n)) || names.find((n) => /\.ogg$/i.test(n) && !BACKING.test(n)) || null;
+  const backingName = names.find((n) => BACKING.test(n)) || null;
+  const backing = backingName ? await get(backingName).blob() : null;
 
   const urls = [];
   const pkg = {
     title: String(info.title || markers?.title || 'Untitled package'),
     subtitle: String(info.subtitle || markers?.subtitle || ''),
+    readme: String(info.readme || ''),
     authors: toArray(info.authors ?? markers?.authors).map(String),
     icon: iconEntry ? await iconEntry.blob() : null,
     characters,
     lines,
+    skipped,
     totalDuration: Math.max(...lines.map((l) => l.end)),
     hasVideo: !!videoName,
     videoName,
+    backing,
+    backingName,
+    hasBacking: !!backing,
     lineById(id) { return lines.find((l) => l.id === id) || null; },
-    async getVideo() { return videoName ? byName.get(videoName).blob() : null; },
+    async getVideo() { return videoName ? get(videoName).blob() : null; },
     /** Object URL for a blob, revoked on dispose(). */
     url(blob) { const u = URL.createObjectURL(blob); urls.push(u); return u; },
     dispose() { for (const u of urls) URL.revokeObjectURL(u); urls.length = 0; },
   };
-  for (const l of lines) l.imageUrl = l.image ? pkg.url(l.image) : null;
+  // Shared character images get one object URL each.
+  const imageUrls = new Map();
+  for (const l of lines) {
+    if (!l.image) { l.imageUrl = null; continue; }
+    const key = l.imageName.toLowerCase();
+    if (!imageUrls.has(key)) imageUrls.set(key, pkg.url(l.image));
+    l.imageUrl = imageUrls.get(key);
+  }
   return pkg;
 }
 
@@ -182,11 +246,11 @@ export async function buildPackage(entries) {
 
 export function summarizePackage(pkg) {
   return {
-    title: pkg.title, subtitle: pkg.subtitle, authors: pkg.authors, characters: pkg.characters,
-    totalDuration: pkg.totalDuration, videoName: pkg.videoName,
+    title: pkg.title, subtitle: pkg.subtitle, readme: pkg.readme, authors: pkg.authors, characters: pkg.characters,
+    totalDuration: pkg.totalDuration, videoName: pkg.videoName, hasBacking: pkg.hasBacking,
     lines: pkg.lines.map((l) => ({
       id: l.id, order: l.order, caption: l.caption, characters: l.characters,
-      timestamps: l.timestamps, start: l.start, end: l.end, duration: l.duration,
+      timestamps: l.timestamps, start: l.start, end: l.end, duration: l.duration, imageName: l.imageName,
     })),
   };
 }
@@ -194,11 +258,11 @@ export function summarizePackage(pkg) {
 /** A player's copy: same shape as buildPackage's model, assets arrive later. */
 export function packageFromSummary(s) {
   const urls = [];
-  const lines = s.lines.map((l) => ({ ...l, image: null, imageUrl: null, wav: null, wavInfo: null }));
+  const lines = s.lines.map((l) => ({ ...l, image: null, imageUrl: null, audio: null, audioBuffer: null }));
   return {
-    title: s.title, subtitle: s.subtitle || '', authors: s.authors || [], icon: null,
+    title: s.title, subtitle: s.subtitle || '', readme: s.readme || '', authors: s.authors || [], icon: null,
     characters: s.characters, lines, totalDuration: s.totalDuration,
-    hasVideo: false, videoName: null, remote: true,
+    hasVideo: false, videoName: null, backing: null, hasBacking: !!s.hasBacking, remote: true,
     lineById(id) { return lines.find((l) => l.id === id) || null; },
     async getVideo() { return null; },
     url(blob) { const u = URL.createObjectURL(blob); urls.push(u); return u; },
@@ -215,17 +279,17 @@ function locateRoot(entries) {
   const baseOf = (p) => p.slice(p.lastIndexOf('/') + 1);
 
   let rootDir = null;
-  const info = entries.find((e) => baseOf(e.path) === PACK_INFO);
+  const info = entries.find((e) => /^_pack_info\.(ini|txt)$/i.test(baseOf(e.path)));
   if (info) rootDir = dirOf(info.path);
   else {
     const idx = entries.find((e) => baseOf(e.path) === MARKERS);
     if (idx) rootDir = dirOf(idx.path);
     else {
-      const card = entries.find((e) => /_line_\d+\.ini$/i.test(baseOf(e.path)));
+      const card = entries.find((e) => /^\d+_[^/]+\.(ini|txt)$/i.test(baseOf(e.path)));
       if (card) rootDir = dirOf(card.path);
     }
   }
-  if (rootDir === null) throw new Error('Not a Choicer Voicer package (no _pack_info.ini, dub_markers.json or line cards found)');
+  if (rootDir === null) throw new Error('Not a Choicer Voicer package: no _pack_info.ini, dub_markers.json or numbered line cards found');
 
   const byName = new Map();
   for (const e of entries) {
