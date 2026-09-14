@@ -8,7 +8,6 @@ Static site served by GitHub Pages at <https://jackbron.github.io>.
 |---|---|
 | `index.html` | Landing page / project index. Plain HTML, no build step, no dependencies. |
 | `line-studio/index.html` | Line Studio — single-file cooking-mode app. Deployed copy. |
-| `video-store/` | The Late Fee — film diary as a rental-store shelf. |
 | `protoboard-studio/` | Protoboard Studio — stripboard layout designer. Deployed copy. |
 
 Nothing here is built. Every page is hand-written HTML/CSS/JS served as-is, so
@@ -17,7 +16,41 @@ editing a file and pushing is the whole deploy.
 ## Adding a project
 
 Copy the marked `<li class="project">` block in `index.html`. Each entry takes an
-index number, a name, a status chip (`live` or `wip`), a description and a tag list.
+index number, a name, a status chip, a description and a tag list. Index numbers
+are cosmetic but are kept contiguous, so renumber the entries below one you
+remove.
+
+**Status chips are hand-edited — nothing sets them automatically.** The chip is
+one class in `index.html` and only changes colour:
+
+```html
+<span class="status wip">wip</span>     <!-- amber -->
+<span class="status live">live</span>   <!-- green, the same dim green as the body text -->
+```
+
+The convention used here: **wip** means the page is published and reachable but
+still changing under you, or has a known rough edge worth warning a visitor
+about. **live** means it does what its description claims, on a phone as well as
+a desktop, and you would not apologise before handing someone the link. Moving a
+project from `wip` to `live` is a deliberate edit to `index.html`, usually in the
+same commit that fixes the last thing you were embarrassed about.
+
+## Home button
+
+Every app links back to the index from its own header, so a visitor is never
+stranded one level deep. The markup is a small inline house glyph plus an
+`Index` label, styled to match whatever bar it sits in:
+
+| Page | Lives in | Href |
+|---|---|---|
+| `line-studio/` | the `.rail`, after the theme toggle | `../` |
+| `protoboard-studio/` | `.menubar-right`, after Save | `../` |
+| `choicer-party/` | `.bar-right`, after Leave | `../` |
+| `choicer-party/test/` | `.bar-right`, beside "Back to the booth" | `../../` |
+
+The icon is inline SVG rather than a glyph or a font so it renders identically
+everywhere. Two of these apps are deployed copies — see the sections below — so
+the same edit has to land in the source of truth or the next deploy reverts it.
 
 ## Updating Line Studio
 
@@ -43,39 +76,6 @@ cp -r <source>/index.html <source>/css <source>/js <source>/parts protoboard-stu
 
 Its `localStorage` keys are all namespaced `pbstudio.*`, so they do not collide
 with the other apps now sharing the `jackbron.github.io` origin.
-
-## The Late Fee (`video-store/`)
-
-```
-video-store/
-  index.html          markup only
-  css/store.css       the shelf, the cases, the room
-  js/store.js         data layer behind an adapter interface
-  js/providers.js     cover lookup + poster→spine colour extraction
-  js/app.js           UI wiring
-```
-
-**Data.** Everything lives in `localStorage` under `latefee.v1`. `store.js` talks
-to an *adapter*, not to storage directly, and its whole API is already async —
-so moving to a shared backend is `useAdapter(RemoteAdapter)` and nothing above it
-changes. Records already carry an `ownerId`, and `importAll` already resolves
-conflicts by newest `updatedAt`, which is the rule a multi-member shelf needs.
-
-**Cover lookup.** A static page cannot hold a secret, so no API key is committed
-here. The member picks TMDB or OMDb in settings and pastes their own free key,
-which is stored in their browser and sent only to that provider. Lookup off is a
-supported state — cover art can always be uploaded by hand.
-
-**Spine colour** is sampled from the poster on a canvas (both provider CDNs send
-`Access-Control-Allow-Origin: *`, and uploads are data URIs, so neither taints).
-When there is no art, the title hashes into a fixed set of period ink colours.
-
-**Uploads** are re-encoded to a ~400px JPEG before storage — full-size art would
-exhaust the ~5MB localStorage budget in a handful of films. Seventeen films with
-five covers came to 21KB.
-
-**Cache busting.** `index.html` links its CSS and JS with `?v=N`. Bump that when
-you change either, or returning visitors keep the cached copy.
 
 ## Choicer Party (`choicer-party/`)
 
