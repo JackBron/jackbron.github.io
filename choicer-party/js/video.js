@@ -105,10 +105,24 @@ export class VideoPlayer {
 
   show(on) { if (this.el) this.el.hidden = !on; }
 
-  async start() {
+  /** Something drawImage() accepts: the <video>, or the canvas inside the ogv.js element. */
+  frameSource() {
+    if (!this.el) return null;
+    if (this.engine === 'native') return this.el;
+    return this.el.querySelector?.('canvas') || null;
+  }
+
+  /** Jump to `t` seconds (paused or playing). */
+  seekTo(t) {
     if (!this.el) return;
-    try { this.el.currentTime = 0; } catch { /* ogv before load */ }
+    try { this.el.currentTime = Math.max(0, t); } catch { /* ogv before load */ }
     this._lastSeek = performance.now();
+  }
+
+  /** Seek to `t` and start playing there. */
+  async playFrom(t = 0) {
+    if (!this.el) return;
+    this.seekTo(t);
     await this.el.play();
   }
 

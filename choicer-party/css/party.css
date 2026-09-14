@@ -332,3 +332,64 @@ button.big{padding:.75rem 1.4rem;font-size:1rem}
   background:var(--bg);color:var(--ink);border:1px solid var(--line2);border-radius:6px;padding:.3rem .5rem;
   font:inherit;font-size:.85rem;max-width:16rem;
 }
+
+/* ======================================================================
+   r6: resume, rules, QR, banners, dub transport, export
+   ====================================================================== */
+
+.relay{margin-right:.4rem}
+.relay.bad{color:#ff8a82}
+
+/* ---------- resume card ---------- */
+.resume{
+  width:min(1040px,100%);display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap;
+  border:1px solid var(--amber);background:#26201a;border-radius:14px;padding:.9rem 1.2rem;
+}
+.resume p{margin:.15rem 0 0;color:var(--ink)}
+.resume-actions{display:flex;gap:.5rem}
+
+/* ---------- lobby extras ---------- */
+.room-code-row{display:flex;gap:1rem;align-items:flex-start;justify-content:space-between;flex-wrap:wrap}
+.qr{width:132px;height:132px;background:#fff;border-radius:8px;padding:6px;flex:none;display:none}
+.qr:has(svg){display:block}
+.qr svg{width:100%;height:100%;display:block}
+.rules{margin-top:1rem;padding-top:.9rem;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:.4rem;font-size:.9rem;color:var(--ink2)}
+.rules h3{margin:0 0 .2rem;font-size:.78rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);font-weight:600}
+.rules small{color:var(--ink3)}
+.assign-actions{display:flex;gap:.6rem;flex-wrap:wrap}
+.assign-table select:disabled{opacity:.5}
+.player-list .gone{opacity:.55}
+.player-list .gone .role{color:#ff8a82}
+
+/* ---------- banners in the booth ---------- */
+.banner{
+  grid-column:1 / -1;display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap;
+  border-radius:var(--radius);padding:.7rem 1rem;font-weight:500;
+}
+.banner.done{background:#16241a;border:1px solid #2f5a3a;color:#bfe9c9}
+.banner.lock{background:#2a1917;border:1px solid #5a2320;color:#ffd0cc}
+.studio.in-room{grid-template-areas:"bar bar" "done done" "lock lock" "lines stage" "lines dub";grid-template-rows:auto auto auto auto 1fr}
+#doneBanner{grid-area:done}
+#lockBanner{grid-area:lock}
+.studio.locked .transport,.studio.locked .options{opacity:.55}
+
+/* ---------- lines header filter ---------- */
+.lines-head .check{margin-left:auto;margin-right:.6rem;color:var(--ink3)}
+.lines-head .check input{accent-color:var(--amber)}
+.line-item.filtered{display:none}
+
+/* ---------- dub transport ---------- */
+.dub-transport{display:flex;align-items:center;gap:.7rem}
+button.icon{width:2.6rem;height:2.6rem;padding:0;display:grid;place-items:center;font-size:1.05rem;border-radius:50%}
+#dubSeek{flex:1;accent-color:var(--amber);height:6px}
+#dubSeek:disabled{opacity:.4}
+.dub-controls .spacer{flex:1}
+.dub-controls{gap:.6rem}
+.dub-view .clip[hidden]{display:none}
+.exporting .dub-view{outline:2px solid var(--rec);outline-offset:-2px}
+
+@media (max-width:960px){
+  .studio.in-room{grid-template-areas:"bar" "done" "lock" "stage" "lines" "dub";grid-template-rows:auto}
+  .qr{width:110px;height:110px}
+  .dub-controls .spacer{display:none}
+}

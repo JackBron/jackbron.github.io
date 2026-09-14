@@ -2,17 +2,19 @@
 // relays and then talk directly over WebRTC data channels. Nothing is hosted
 // by us; the room code is the shared secret that names the room.
 //
-// The host is authoritative. Players send `hello`, `progress`, `take` and
-// `clock`; the host answers with `roster`, `pack`, `frame`, `audio`, `phase`,
-// `play` and `stop`. Takes are broadcast to every peer so each one can render
-// the same mix locally.
+// The host is authoritative. Players send `hello`, `progress`, `take`, `need`
+// and `clock`; the host answers with `roster`, `pack`, `frame`, `audio`,
+// `backing`, `play` and `stop`. Takes are broadcast to every peer so each one
+// can render the same mix locally. People are identified by a stable clientId
+// (see store.js), not by the per-load peer id, so a reload keeps their part.
 
-import { joinRoom, selfId } from 'https://cdn.jsdelivr.net/npm/trystero@0.25.4/+esm';
+import { joinRoom, selfId, getRelaySockets } from 'https://cdn.jsdelivr.net/npm/trystero@0.25.4/+esm';
 
 export { selfId };
 
 const APP_ID = 'jackbron-choicer-party';
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ'; // no I or O
+const ACTIONS = ['hello', 'roster', 'pack', 'frame', 'audio', 'backing', 'take', 'progress', 'need', 'clock', 'play', 'stop'];
 
 export function makeCode(len = 4) {
   const bytes = crypto.getRandomValues(new Uint8Array(len));
@@ -23,25 +25,27 @@ export function normalizeCode(s) {
   return String(s || '').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 8);
 }
 
-/** 0.25 hands callbacks a peer object ({ peerId, ... }); older builds a string. */
+/** Trystero 0.25 hands callbacks a peer object ({ peerId, metadata }); older builds a string. */
 const idOf = (p) => (p && typeof p === 'object' ? p.peerId : p);
 
 export class Room {
-  constructor(code) {
+  constructor(code, { onError = null } = {}) {
     this.code = code;
+    this.onError = onError;
     this.room = joinRoom({ appId: APP_ID }, `choicer-${code}`);
     this.handlers = new Map();
     this.progressHandlers = new Map();
     this.actions = {};
-    for (const name of ['hello', 'roster', 'pack', 'frame', 'audio', 'backing', 'take', 'progress', 'clock', 'play', 'stop']) {
-      // Trystero 0.25 returns { send, onMessage, onReceiveProgress } where the
-      // two handlers are assignable properties; earlier releases returned a
-      // [send, onMessage, onProgress] tuple of functions. Support both.
+    for (const name of ACTIONS) {
+      // 0.25 returns { send, onMessage, onReceiveProgress } with assignable
+      // handlers; earlier releases returned a [send, onMessage, onProgress] tuple.
       const action = this.room.makeAction(name);
-      // 0.25 calls back with (data, { peerId, metadata }); older builds with
-      // (data, peerId, metadata).
       const onMsg = (data, peer, meta) => {
-        for (const h of this.handlers.get(name) || []) h(data, idOf(peer), meta ?? peer?.metadata);
+        const pid = idOf(peer);
+        const m = meta ?? peer?.metadata;
+        for (const h of this.handlers.get(name) || []) {
+          try { h(data, pid, m); } catch (err) { console.error(`handler for ${name} failed`, err); this.onError?.(err, name); }
+        }
       };
       const onProg = (pct, peer, meta) => {
         for (const h of this.progressHandlers.get(name) || []) h(pct, idOf(peer), meta ?? peer?.metadata);
@@ -57,7 +61,6 @@ export class Room {
     this._clockWaiters = new Map();
     this.on('clock', (msg, peerId) => {
       if (msg.t2 == null) {
-        // a request: answer with our clock
         this.send('clock', { t1: msg.t1, t2: performance.now() }, peerId);
       } else {
         const w = this._clockWaiters.get(msg.t1);
@@ -77,31 +80,46 @@ export class Room {
     this.progressHandlers.get(name).push(handler);
   }
 
-  /** send(name, data, target?, metadata?) — target omitted broadcasts. */
-  send(name, data, target = null, metadata = null) {
+  /**
+   * send(name, data, target?, metadata?) — target omitted broadcasts to every
+   * peer. Resolves true when delivered, false on failure; never throws.
+   */
+  async send(name, data, target = null, metadata = null) {
     const opts = {};
     if (target) opts.target = target;
     if (metadata) opts.metadata = metadata;
-    return this.actions[name](data, opts);
+    try {
+      await this.actions[name](data, opts);
+      return true;
+    } catch (err) {
+      console.warn(`send ${name} failed`, err);
+      this.onError?.(err, name);
+      return false;
+    }
   }
 
-  // Same story as makeAction: 0.25 exposes these as assignable properties.
   onPeerJoin(fn) { const f = (p) => fn(idOf(p)); if (typeof this.room.onPeerJoin === 'function') this.room.onPeerJoin(f); else this.room.onPeerJoin = f; }
   onPeerLeave(fn) { const f = (p) => fn(idOf(p)); if (typeof this.room.onPeerLeave === 'function') this.room.onPeerLeave(f); else this.room.onPeerLeave = f; }
   peers() {
     const p = typeof this.room.getPeers === 'function' ? this.room.getPeers() : this.room.peers;
     return p instanceof Map ? [...p.keys()] : Object.keys(p || {});
   }
-  leave() { return this.room.leave(); }
+  leave() { try { return this.room.leave(); } catch { return undefined; } }
 
-  /**
-   * Estimate peer's clock minus ours (ms, performance.now() domain) with a
-   * few round trips, keeping the sample with the shortest trip.
-   */
+  /** How many signalling relays are currently open. */
+  static relayStatus() {
+    try {
+      const sockets = getRelaySockets();
+      const list = Object.values(sockets || {});
+      return { open: list.filter((s) => s && s.readyState === 1).length, total: list.length };
+    } catch { return { open: 0, total: 0 }; }
+  }
+
+  /** Peer's clock minus ours (ms, performance.now() domain), best of a few round trips. */
   async syncClock(peerId, rounds = 6) {
     let best = null;
     for (let i = 0; i < rounds; i++) {
-      const t1 = performance.now() + Math.random() * 1e-3; // unique key
+      const t1 = performance.now() + Math.random() * 1e-3;
       const reply = await new Promise((resolve) => {
         const timer = setTimeout(() => { this._clockWaiters.delete(t1); resolve(null); }, 2000);
         this._clockWaiters.set(t1, (m) => { clearTimeout(timer); resolve(m); });
@@ -113,14 +131,14 @@ export class Room {
       const offset = reply.t2 - (t1 + t3) / 2;
       if (!best || rtt < best.rtt) best = { offset, rtt };
     }
-    return best; // null when the peer never answered
+    return best;
   }
 }
 
 /* ---------------- take wire format ---------------- */
 
 /** Float32 mono take -> Int16 buffer + JSON metadata. Halves the bytes. */
-export function encodeTake(lineId, take, by) {
+export function encodeTake(lineId, take, by, byClientId) {
   const n = take.samples.length;
   const i16 = new Int16Array(n);
   for (let i = 0; i < n; i++) {
@@ -129,27 +147,57 @@ export function encodeTake(lineId, take, by) {
   }
   return {
     data: i16,
-    meta: { lineId, sampleRate: take.sampleRate, offset: take.offset || 0, gain: take.gain ?? 1, lineDuration: take.lineDuration, tail: take.tail, by },
+    meta: {
+      lineId, sampleRate: take.sampleRate, offset: take.offset || 0, gain: take.gain ?? 1,
+      lineDuration: take.lineDuration, tail: take.tail, by, byClientId, recordedAt: take.recordedAt || Date.now(),
+    },
   };
 }
 
 export function decodeTake(buffer, meta) {
-  const i16 = new Int16Array(buffer instanceof ArrayBuffer ? buffer : buffer.buffer);
+  const ab = buffer instanceof ArrayBuffer ? buffer : buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+  const i16 = new Int16Array(ab);
   const f32 = new Float32Array(i16.length);
   for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / (i16[i] < 0 ? 0x8000 : 0x7fff);
   return {
     samples: f32, sampleRate: meta.sampleRate, offset: meta.offset || 0, gain: meta.gain ?? 1,
-    lineDuration: meta.lineDuration, tail: meta.tail, by: meta.by, remote: true, recordedAt: Date.now(),
+    lineDuration: meta.lineDuration, tail: meta.tail, by: meta.by, byClientId: meta.byClientId,
+    remote: true, recordedAt: meta.recordedAt || Date.now(),
   };
+}
+
+/* ---------------- images on the wire ---------------- */
+
+/**
+ * Re-encode an image blob as a JPEG no wider than `maxW`. The Toy Story pack
+ * ships 600 KB PNG portraits that come out around 60 KB; on a 10-player room
+ * that is the difference between a pause and a coffee break.
+ */
+export async function shrinkImage(blob, maxW = 640, quality = 0.82) {
+  try {
+    const bitmap = await createImageBitmap(blob);
+    const k = Math.min(1, maxW / bitmap.width);
+    const w = Math.max(1, Math.round(bitmap.width * k));
+    const h = Math.max(1, Math.round(bitmap.height * k));
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const g = canvas.getContext('2d');
+    g.drawImage(bitmap, 0, 0, w, h);
+    bitmap.close?.();
+    const out = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', quality));
+    return out && out.size < blob.size ? out : blob;
+  } catch {
+    return blob;
+  }
 }
 
 /* ---------------- assignment ---------------- */
 
 /**
- * Deal lines to performers. With at least as many characters as performers,
- * characters go round-robin and a line follows its first character. With more
- * performers than characters (a one-voice pack at a party), lines go
- * round-robin instead so everyone gets a turn.
+ * Deal lines to performers (client ids). With at least as many characters as
+ * performers, whole characters go round-robin and a line follows its first
+ * character. With more performers than characters (a one-voice pack at a
+ * party), lines go round-robin so everyone gets a turn.
  */
 export function autoAssign(lines, characters, performerIds) {
   const out = {};

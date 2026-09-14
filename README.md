@@ -87,19 +87,23 @@ plays the finished dub back in sync. Vanilla ES modules, no build. Needs
 
 ```
 choicer-party/
-  index.html                  markup: loader, lobby, booth
+  index.html                  markup: loader (+resume card), lobby, booth
   css/party.css               the booth
-  js/ini.js                   Godot ConfigFile (.ini) card parser
+  js/ini.js                   Godot ConfigFile card parser (lenient numbers/arrays)
   js/zip.js                   zip reader on DecompressionStream, no library
   js/wav.js                   WAV header walk + 16-bit encoder
-  js/package.js               folder / zip / drop / URL -> package model; wire summary
+  js/package.js               folder / zip / drop / URL -> package model (both layouts); wire summary
   js/pcm-capture.worklet.js   AudioWorklet: sample-accurate mic capture, streams chunks
-  js/recorder.js              shared AudioContext: mic, takes, playback
+  js/recorder.js              shared AudioContext: mic, takes, playback; autoplay unlock
   js/waveform.js              layered peaks + playhead on a canvas, live-growing layer
-  js/mixer.js                 OfflineAudioContext mixdown
-  js/video.js                 clip playback: native <video>, else ogv.js (Theora)
-  js/room.js                  Trystero room, wire format, character dealing (lazy-loaded)
+  js/mixer.js                 OfflineAudioContext mixdown, backing track, autoGain, normalize
+  js/video.js                 clip playback: native <video>, else ogv.js (Theora); seek/frameSource
+  js/room.js                  Trystero room, wire format, image shrinking, dealing (lazy-loaded)
+  js/store.js                 IndexedDB: session record, takes, package files; per-tab clientId
+  js/qr.js                    QR code for the join link (qrcode-generator from cdnjs, lazy)
+  js/export.js                canvas + MediaRecorder video export with burned-in captions
   js/app.js                   UI wiring for solo / host / player
+  test/index.html, tests.js   unit tests + package validator (same modules as the booth)
 ```
 
 **Package format.** Two layouts exist, both flat folders, both accepted:
@@ -142,6 +146,59 @@ tested locally. A static host has no directory listing, so a URL pack needs
 either an `index.json` (a JSON array of its file names) or, for export packs,
 the `dub_markers.json`. Players receive only the images, the backing track and
 the audio of their own lines, over WebRTC.
+
+**Identity and persistence.** People are identified by a `clientId` kept in
+`sessionStorage` (per tab, survives reload) and mirrored into the saved
+session record, never by the transport's per-load peer id. Assignments are
+keyed by client id, so a refreshed player says hello again and gets the same
+lines. Takes go into IndexedDB the moment they are saved, on every device; the
+host also stores the package files. The loader shows a **Resume** card when a
+session exists: a host resumes the same room code, players reconnect on their
+own (a `roster` from a new peer with the known `hostClientId` is accepted, and
+the player resends its own takes to the new host); a player resumes and gets
+their takes back when the roster arrives. Session records are keyed per client
+id, so a host testing with a second tab in the same browser does not clobber
+its own record; stale records older than a week are pruned.
+
+**Phases and rules.** `lobby` -> `record` -> `final`. The host's **Finalize**
+(a confirmation, warning about unrecorded lines) locks every booth: no
+recording, nudging or deleting, `take`/`progress` messages are ignored by all
+peers, and the host's transport (play/pause/seek) drives everyone's playback.
+**Unlock** returns to `record`. Room rules set in the lobby and fixed at Start:
+*one take per line* (Record disables after a take, delete is off, and peers
+ignore a second take from the same performer) and *performers may nudge*.
+Mid-session the host can **Manage parts**: the assignment table stays live in
+`record`, a change sends the new performer the line audio, and people who left
+still show as holders until their lines are handed on.
+
+**Transport.** Images are re-encoded to JPEG (<=640 px) once per shared
+character image before sending. Players count what they are missing and send a
+`need` (frames / line ids / backing) after 12 s, repeating until complete;
+there is a manual "Resend my files" too. `room.js` wraps every send and handler
+in try/catch and reports through `onError`; the header shows how many
+signalling relays are open.
+
+**Playback and export.** The dub has play/pause, a scrubber and a time
+readout. Positions are mix seconds; `play {at, from}` / `stop {pos}` carry them
+to the room when the host's "Everyone hears this" is on (forced on in
+`final`). **Export video** composites the decoded clip (or the frame slideshow)
+plus burned-in captions on a canvas at up to 1280 px, feeds it and the mix
+into `MediaRecorder`, and saves MP4 (H.264/AAC) where supported, else WebM. It
+runs in real time, shows progress, and can be cancelled. A 24 s clip came out
+as 1.8 MB of MP4 in Chromium.
+
+**Navigation.** Performers open on their first unrecorded line and, after a
+take lands on the line they are viewing, move to their next unrecorded line;
+non-performers follow the script. "Only mine" filters the list. The booth
+shows a green banner when every assigned line is in (host: Finalize & play),
+or when your own lines are done and others are still recording.
+
+**Package tester** (`choicer-party/test/`): unit tests for the card parser,
+zip reader, both package layouts, summary round trip, dealing, take codec,
+image shrinking, autoGain/normalize, mixdown placement and the store, plus a
+validator that loads a real pack and lists per-line warnings (missing image,
+same-character overlaps, ends after the backing track, multi-speaker cards)
+and unreferenced files.
 
 **Rooms** run on [Trystero](https://github.com/dmotz/trystero) 0.25 (pinned,
 from jsDelivr): peers meet through public Nostr relays, then talk directly over
@@ -213,8 +270,7 @@ line nobody has recorded, and when a take lands on the line you are looking at,
 you move to the next line a beat and a half later (a checkbox in the booth turns
 this off). Navigating by hand or starting a take cancels the pending move.
 
-Not yet: reassigning a line after recording has started (a player who drops
-out strands their lines until the host re-deals from a fresh lobby), a muxed
-video download (the `.wav` mix downloads today; ogv.js draws to a canvas, so
-`canvas.captureStream` + the mix into `MediaRecorder` is the route), persisting
-takes across a reload, and a QR code for the join link.
+Not yet: an onboarding explainer and demo pack, a host hand-off (the host's
+package lives only on the host), and the two autoplay-policy edge cases that
+are still being chased on Firefox and phones (waveform before the first Record,
+sound before the mic permission).

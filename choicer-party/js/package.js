@@ -141,7 +141,7 @@ export async function buildPackage(entries) {
   for (const m of markers?.markers || []) markerByStem.set(m.filename.replace(/\.[^.]+$/, '').toLowerCase(), m);
 
   const cardNames = names
-    .filter((n) => CARD_EXT.test(n) && !/^_pack_info\./i.test(n) && !/^readme/i.test(n))
+    .filter((n) => CARD_EXT.test(n) && !/^_pack_info\./i.test(n))
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   if (!cardNames.length) throw new Error('No line cards found: expected NN_character.txt (native) or NNN_line_NN.ini (export) files next to _pack_info.ini');
 
