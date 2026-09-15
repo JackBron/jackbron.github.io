@@ -364,6 +364,35 @@ body.cooking #tray{top:96px}
   text-transform:uppercase;border:1px solid currentColor;border-radius:2px;padding:0 4px;margin-left:6px;vertical-align:1px}
 .shoplist .tag.mix{color:var(--flame)}
 .shoplist .tag.pkt{color:var(--ink3)}
+.shopbtns{align-items:center}
+.shopbtns .tally{font-family:var(--f-mono);font-size:11px;color:var(--ink3);margin-left:auto}
+
+/* ---------- printable shopping list ----------
+   The sheet is built on demand into #printsheet and everything else on the page
+   is hidden for print, so the browser's own Print dialog does the work — no
+   popup window to be blocked and no second copy of the stylesheet. */
+#printsheet{display:none}
+@media print{
+  /* Scoped to body.printlist, which is added only for the duration of a
+     shopping-list print — otherwise the recipe print rules further down still
+     apply and Ctrl+P on a recipe keeps working as it always did. */
+  body.printlist{background:#fff !important;color:#000 !important;padding:0 !important;margin:0 !important;height:auto}
+  body.printlist > *{display:none !important}
+  body.printlist > #printsheet{display:block !important}
+  body.printlist #printsheet{font-family:var(--f-body);color:#000;padding:0}
+  #printsheet h1{font-family:var(--f-disp);font-size:20pt;text-transform:uppercase;letter-spacing:.06em;margin:0}
+  #printsheet .wk{font-family:var(--f-mono);font-size:8.5pt;color:#444;margin:2pt 0 12pt}
+  #printsheet h2{font-family:var(--f-disp);font-size:11pt;text-transform:uppercase;letter-spacing:.05em;
+    margin:12pt 0 3pt;padding-bottom:2pt;border-bottom:1px solid #000;break-after:avoid;page-break-after:avoid}
+  #printsheet ul{list-style:none;margin:0 0 6pt;padding:0;columns:2;column-gap:26pt}
+  #printsheet li{display:flex;gap:6pt;align-items:baseline;padding:3pt 0;font-size:10pt;
+    border-bottom:1px dotted #bbb;break-inside:avoid;page-break-inside:avoid}
+  #printsheet .pbox{flex:0 0 auto;width:9pt;height:9pt;border:1px solid #000;border-radius:1pt;position:relative;top:1pt}
+  #printsheet .pq{font-family:var(--f-mono);font-size:8.5pt;white-space:nowrap;flex:0 0 auto;min-width:46pt;text-align:right}
+  #printsheet .pn{flex:1}
+  #printsheet .pn small{display:block;font-size:7pt;color:#666;line-height:1.3}
+  @page{margin:14mm}
+}
 
 /* ---------- status bar ---------- */
 .status{
@@ -438,15 +467,17 @@ textarea.paste{width:100%;min-height:210px;background:var(--panel2);border:1px s
   <span class="dot" id="sdot"></span>
   <span id="sctx">no recipe loaded</span>
   <span class="msg" id="smsg"></span>
-  <span class="rev">LINE STUDIO&nbsp;&nbsp;r15</span>
+  <span class="rev">LINE STUDIO&nbsp;&nbsp;r16</span>
 </div>
+
+<div id="printsheet" aria-hidden="true"></div>
 
 <input type="file" id="fileIn" accept=".json,application/json" multiple hidden>
 
 <script>
 "use strict";
 /* =====================================================================
-   LINE STUDIO r15 — standalone cooking mode
+   LINE STUDIO r16 — standalone cooking mode
    Loads recipe JSON (single recipe, array, or cookbook) and runs it.
    Library, week plan, and theme persist in localStorage; the exported
    cookbook file carries all of it as the portable backup.
@@ -458,6 +489,8 @@ textarea.paste{width:100%;min-height:210px;background:var(--panel2);border:1px s
    tsp); plural forms for sheet, sac, packet and fillet.
    r15: thirds count as measurable cup amounts, so 1/3 cup survives a round trip
    through the shopping list instead of coming back as 5 1/3 Tbsp.
+   r16: shopping list ticks persist (keyed by week) and survive closing the
+   modal; copy drops the [ ] prefix and omits ticked items; printable sheet.
    ===================================================================== */
 
 const $ = (s,r)=> (r||document).querySelector(s);
@@ -473,7 +506,7 @@ const S = {
   newTimer: false,
   plan: {},              // "2026-08-17" -> [{r:recipeId, s:servings, slot:"Dinner"}]
   week: null,            // Date of the Monday being shown
-  shopGot: new Set(),
+  shopGot: new Set(),    // shopping list: ticked-off rows, keyed by week so a new week starts clean
   comp: new Set(),       // ingredient ids whose breakdown is expanded
   mixShut: new Set(),    // shopping list: mixes set to "buy the packet" (absent = break down)
   wake: null,
@@ -593,6 +626,7 @@ function save(){
   try{
     localStorage.setItem(LS_KEY, JSON.stringify({
       book: S.book, plan: S.plan,
+      shopGot: Array.from(S.shopGot), mixShut: Array.from(S.mixShut),
       theme: document.documentElement.getAttribute('data-theme')||'day'
     }));
   }catch(e){ /* storage blocked — export is the fallback */ }
@@ -603,6 +637,8 @@ function load(){
     if(!d) return;
     if(Array.isArray(d.book)) S.book = d.book.map(normRecipe);
     if(d.plan && typeof d.plan==='object') S.plan = d.plan;
+    if(Array.isArray(d.shopGot)) S.shopGot = new Set(d.shopGot);
+    if(Array.isArray(d.mixShut)) S.mixShut = new Set(d.mixShut);
     if(d.theme==='night'){ document.documentElement.setAttribute('data-theme','night'); $('#btnTheme').textContent='Day'; }
   }catch(e){}
 }
@@ -1265,17 +1301,26 @@ function shopModal(){
   let data = buildShop();
   if(!data.rows.length && !data.loose.length){ say('nothing planned this week'); return; }
 
+  /* Ticks are keyed by week, not just by ingredient, so next week's list starts
+     clean instead of inheriting last week's shopping trip. Both views share the
+     key, so switching Combined <-> By recipe keeps your place. */
+  const wk = ymd(mon);
+  const rowKey  = e => wk+'|'+e.key;
+  const looseKey= l => wk+'|loose|'+l.name.toLowerCase();
+  const isGot   = k => S.shopGot.has(k);
+
   const disp = e=>{
     const [v,u] = fromBase(e.total, e.fam);
     return { q: qtyOf({amount:v, unit:u, scale:true}, 1),
              nm: (e.ing.namePlural && v>1) ? e.ing.namePlural : e.ing.name };
   };
-  /* provenance line under an ingredient: which recipe wanted it, and whether it
-     arrived as part of a mix rather than as a thing the recipe names outright */
   const srcText = (e, hideRecipe)=> Array.from(e.from.values()).map(s=>{
     if(s.mix) return (hideRecipe? '' : s.recipe+' ') + '→ '+s.mix;
     return hideRecipe ? (s.packet? 'bought pre-made' : '·') : s.recipe;
   }).filter(t=>t!=='·').join(', ');
+  const looseSrc = (l, hideRecipe)=> Array.from(l.from.values())
+    .map(s=> s.mix ? (hideRecipe?'':s.recipe+' ')+'→ '+s.mix : (hideRecipe?'':s.recipe))
+    .filter(Boolean).join(', ');
   const badges = e=>{
     const v = Array.from(e.from.values());
     let out='';
@@ -1283,18 +1328,16 @@ function shopModal(){
     if(v.some(s=>s.packet)) out += '<span class="tag pkt">packet</span>';
     return out;
   };
-  const li = (e, scope)=>{
-    const d = disp(e), s = srcText(e, !!scope);
-    return `<li data-shop="${esc((scope||'')+e.key)}">
+  const li = (e, scoped)=>{
+    const d = disp(e), s = srcText(e, !!scoped), k = rowKey(e);
+    return `<li data-shop="${esc(k)}" class="${isGot(k)?'got':''}">
       <span class="box"></span><span class="qty">${esc(d.q)}</span>
       <span class="nm">${esc(d.nm)}${badges(e)}${s?`<small>${esc(s)}</small>`:''}</span></li>`;
   };
-  const looseSrc = (l, hideRecipe)=> Array.from(l.from.values())
-    .map(s=> s.mix ? (hideRecipe?'':s.recipe+' ')+'→ '+s.mix : (hideRecipe?'':s.recipe))
-    .filter(Boolean).join(', ');
-  const looseLi = (l, scope)=>{
-    const s = looseSrc(l, !!scope);
-    return `<li><span class="box" style="visibility:hidden"></span><span class="qty">—</span>
+  const looseLi = (l, scoped)=>{
+    const s = looseSrc(l, !!scoped), k = looseKey(l);
+    return `<li data-shop="${esc(k)}" class="${isGot(k)?'got':''}">
+      <span class="box"></span><span class="qty">—</span>
       <span class="nm">${esc(l.name)}<small>to taste${s?' · '+esc(s):''}</small></span></li>`;
   };
 
@@ -1309,29 +1352,64 @@ function shopModal(){
     if(!grouped) return `<ul class="shoplist bom">${data.rows.map(e=>li(e)).join('')}${data.loose.map(l=>looseLi(l)).join('')}</ul>`;
     return data.groups.map(g=>`<div class="shopgrp">
       <h4>${esc(g.title)}<span>${g.servings} ${esc(g.label)}${g.meals>1?' · '+g.meals+' meals':''}</span></h4>
-      <ul class="shoplist bom">${g.rows.map(e=>li(e,'g'+g.id+':')).join('')}${g.loose.map(l=>looseLi(l,1)).join('')}</ul>
+      <ul class="shoplist bom">${g.rows.map(e=>li(e,1)).join('')}${g.loose.map(l=>looseLi(l,1)).join('')}</ul>
     </div>`).join('');
   };
 
+  /* what's left to buy — checked rows drop out of copy and print entirely */
+  const openRows  = rows  => rows.filter(e=>!isGot(rowKey(e)));
+  const openLoose = loose => loose.filter(l=>!isGot(looseKey(l)));
+  const tally = ()=>{
+    const all = data.rows.length + data.loose.length;
+    const got = data.rows.filter(e=>isGot(rowKey(e))).length + data.loose.filter(l=>isGot(looseKey(l))).length;
+    return {all, got, left: all-got};
+  };
+
+  /* Plain lines, no [ ] prefix. iOS Notes has no paste format that becomes a
+     checklist on its own — you paste these, select all, and tap the checklist
+     button, and a leading [ ] would just end up as literal text in each item. */
   const copyText = ()=>{
     const head = 'Shopping — week of '+weekLabel(mon);
     if(!grouped){
-      const body = data.rows.map(e=>{
+      const body = openRows(data.rows).map(e=>{
         const d = disp(e), s = srcText(e);
-        return '[ ] '+(d.q? d.q+' ':'')+d.nm+(s? '  ('+s+')' : '');
-      }).concat(data.loose.map(l=>{ const s=looseSrc(l); return '[ ] '+l.name+'  (to taste'+(s?' · '+s:'')+')'; }));
-      return head+'\n\n'+body.join('\n');
+        return (d.q? d.q+' ':'')+d.nm+(s? '  ('+s+')' : '');
+      }).concat(openLoose(data.loose).map(l=>{ const s=looseSrc(l); return l.name+'  (to taste'+(s?' · '+s:'')+')'; }));
+      return body.length ? head+'\n\n'+body.join('\n') : head+'\n\nNothing left — everything is ticked off.';
     }
     const secs = data.groups.map(g=>{
-      const lines = g.rows.map(e=>{
+      const lines = openRows(g.rows).map(e=>{
         const d = disp(e), v = Array.from(e.from.values());
         const mx = v.filter(s=>s.mix).map(s=>'→ '+s.mix);
         const tag = mx.length ? '  ('+mx.join(', ')+')' : v.some(s=>s.packet) ? '  (pre-made)' : '';
-        return '[ ] '+(d.q? d.q+' ':'')+d.nm+tag;
-      }).concat(g.loose.map(l=>{ const s=looseSrc(l,1); return '[ ] '+l.name+'  (to taste'+(s?' · '+s:'')+')'; }));
-      return g.title.toUpperCase()+' — '+g.servings+' '+g.label+(g.meals>1?' · '+g.meals+' meals':'')+'\n'+lines.join('\n');
-    });
-    return head+'\nGrouped by recipe\n\n'+secs.join('\n\n');
+        return (d.q? d.q+' ':'')+d.nm+tag;
+      }).concat(openLoose(g.loose).map(l=>{ const s=looseSrc(l,1); return l.name+'  (to taste'+(s?' · '+s:'')+')'; }));
+      return lines.length ? g.title.toUpperCase()+' — '+g.servings+' '+g.label+(g.meals>1?' · '+g.meals+' meals':'')+'\n'+lines.join('\n') : '';
+    }).filter(Boolean);
+    return secs.length ? head+'\nGrouped by recipe\n\n'+secs.join('\n\n') : head+'\n\nNothing left — everything is ticked off.';
+  };
+
+  /* The printable sheet is built into its own element; a print stylesheet hides
+     everything else on the page so the browser's own Print dialog does the rest. */
+  const printHTML = ()=>{
+    const t = tally();
+    const item = (q,nm,sub)=>`<li><span class="pbox"></span><span class="pq">${esc(q||'')}</span>
+      <span class="pn">${esc(nm)}${sub?`<small>${esc(sub)}</small>`:''}</span></li>`;
+    let body;
+    if(!grouped){
+      const items = openRows(data.rows).map(e=>{ const d=disp(e); return item(d.q, d.nm, srcText(e)); })
+        .concat(openLoose(data.loose).map(l=>item('', l.name, 'to taste · '+looseSrc(l))));
+      body = `<ul>${items.join('')}</ul>`;
+    } else {
+      body = data.groups.map(g=>{
+        const items = openRows(g.rows).map(e=>{ const d=disp(e); return item(d.q, d.nm, srcText(e,1)); })
+          .concat(openLoose(g.loose).map(l=>item('', l.name, 'to taste')));
+        return items.length ? `<h2>${esc(g.title)} — ${g.servings} ${esc(g.label)}</h2><ul>${items.join('')}</ul>` : '';
+      }).filter(Boolean).join('');
+    }
+    return `<h1>Shopping list</h1>
+      <p class="wk">Week of ${esc(weekLabel(mon))} · ${t.left} item${t.left===1?'':'s'}${t.got?` · ${t.got} already ticked off and not shown`:''}</p>
+      ${body || '<p class="wk">Nothing left — everything is ticked off.</p>'}`;
   };
 
   const m = modal('Shopping list — week of '+weekLabel(mon), `
@@ -1341,10 +1419,18 @@ function shopModal(){
     </div>
     ${mixPanel()}
     <div id="shopBody">${listHTML()}</div>
-    <div class="btnrow" style="justify-content:flex-start">
-      <button class="btn solid" data-copyshop>Copy as text</button></div>`);
+    <div class="btnrow shopbtns">
+      <button class="btn solid" data-copyshop>Copy as text</button>
+      <button class="btn" data-printshop>Print</button>
+      <button class="btn" data-clearshop>Clear ticks</button>
+      <span class="tally" data-tally></span></div>`);
 
-  const redraw = ()=>{ data = buildShop(); $('#shopBody',m).innerHTML = listHTML(); };
+  const showTally = ()=>{
+    const t = tally();
+    $('[data-tally]',m).textContent = t.got ? `${t.left} left · ${t.got} ticked off` : `${t.all} items`;
+  };
+  const redraw = ()=>{ data = buildShop(); $('#shopBody',m).innerHTML = listHTML(); showTally(); };
+  showTally();
 
   m.addEventListener('click', e=>{
     const mixBtn = e.target.closest('[data-mixk]');
@@ -1354,7 +1440,7 @@ function shopModal(){
       const sp = mixBtn.querySelectorAll('span');
       sp[0].classList.toggle('on', !S.mixShut.has(k));
       sp[1].classList.toggle('on',  S.mixShut.has(k));
-      redraw(); return;
+      save(); redraw(); return;
     }
     const viewBtn = e.target.closest('[data-view]');
     if(viewBtn){
@@ -1367,10 +1453,38 @@ function shopModal(){
       redraw(); return;
     }
     const row = e.target.closest('[data-shop]');
-    if(row){ row.classList.toggle('got'); return; }
+    if(row){
+      const k = row.getAttribute('data-shop'), on = !S.shopGot.has(k);
+      if(on) S.shopGot.add(k); else S.shopGot.delete(k);
+      /* the same ingredient can appear under several recipes in the grouped
+         view — tick them all, since you only buy it once */
+      $$('[data-shop]', m).forEach(x=>{ if(x.getAttribute('data-shop')===k) x.classList.toggle('got', on); });
+      save(); showTally(); return;
+    }
+    if(e.target.hasAttribute('data-clearshop')){
+      /* wipe the whole week's keys, not just the rows currently on screen —
+         flipping a mix to Packet can strand a tick on a row that no longer exists */
+      let n=0;
+      Array.from(S.shopGot).forEach(k=>{ if(k.startsWith(wk+'|')){ S.shopGot.delete(k); n++; } });
+      save(); redraw(); say(n? n+' tick'+(n===1?'':'s')+' cleared' : 'nothing was ticked');
+      return;
+    }
+    if(e.target.hasAttribute('data-printshop')){
+      $('#printsheet').innerHTML = printHTML();
+      document.body.classList.add('printlist');
+      const done = ()=>{ document.body.classList.remove('printlist');
+                         window.removeEventListener('afterprint', done); };
+      window.addEventListener('afterprint', done);
+      say('sending to print…');
+      setTimeout(()=>{ window.print(); setTimeout(done, 500); }, 60);
+      return;
+    }
     if(e.target.hasAttribute('data-copyshop')){
-      navigator.clipboard.writeText(copyText())
-        .then(()=>say(grouped?'list copied — grouped by recipe':'shopping list copied'),()=>say('clipboard blocked'));
+      const t = tally();
+      navigator.clipboard.writeText(copyText()).then(
+        ()=>say(t.got ? `copied ${t.left} item${t.left===1?'':'s'} — ${t.got} ticked off left out`
+                      : (grouped?'list copied — grouped by recipe':'shopping list copied')),
+        ()=>say('clipboard blocked'));
     }
   });
 }

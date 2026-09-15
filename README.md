@@ -59,8 +59,17 @@ The app's source of truth lives outside the published tree in `Cooking_Mode/`
 recipe content and is deliberately not published). To ship a new revision:
 
 ```
-cp Cooking_Mode/line_studio_<rev>.html line-studio/index.html
+python tools/deploy-line-studio.py                  # newest revision found
+python tools/deploy-line-studio.py <path-to-html>   # a specific file
 ```
+
+**Do not just `cp` the file.** The published copy is not byte-identical to the
+app: it carries a "back to the project index" link in the rail that has no place
+in the standalone file you open from disk. A plain copy deletes that link, and
+nothing visibly breaks — you just quietly lose the way back to the index. The
+script re-applies the patch on every deploy and is idempotent; it aborts loudly
+if the app's markup moves out from under it rather than producing a half-patched
+page.
 
 The revision string stays visible in the app's status bar, bottom right.
 
