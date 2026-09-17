@@ -73,6 +73,32 @@ page.
 
 The revision string stays visible in the app's status bar, bottom right.
 
+### Save to Google Drive
+
+`line-studio/drive.js` adds a **Save to Drive** button to the rail. It uploads
+the cookbook and week plan — the same payload `File ▸ Export cookbook` writes —
+straight to Drive, updating the same file in place rather than accumulating
+copies.
+
+There is no *import* counterpart on purpose: on iOS the existing **Choose
+files** button already opens the Files app with Drive in it, so importing was
+redundant. Saving is the direction with no built-in shortcut.
+
+It is a separate file, not part of the app: it reaches the app only through the
+globals its top-level script already exposes (`save`, `say`), so a new revision
+never has to be merged with it. The deploy script injects the `<script>` tag.
+
+Needs one Google Cloud OAuth client ID — see
+[`line-studio/DRIVE-SETUP.md`](line-studio/DRIVE-SETUP.md). No API key: that was
+only needed by the file Picker, which saving does not use. Until the ID is
+filled in, the button says so and does nothing else.
+
+Scope is `drive.file`, so the app can only ever touch files it created itself —
+non-sensitive, and out of Google's restricted-scope verification review. OAuth
+origins cannot be `file://`, so the button hides itself when the page is not
+served over http(s); the from-disk copy is unaffected either way, being the
+unpatched `line_studio_rNN.html` with no script tag at all.
+
 ## Updating Protoboard Studio
 
 Source of truth is the working copy at `Python Scripts/Protoboard_Studio`. The

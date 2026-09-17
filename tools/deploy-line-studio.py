@@ -44,6 +44,13 @@ RAIL_PATCH = (
     '</svg>Index</a>'
 )
 
+# drive.js adds the "Import from Drive" button. It is a separate file so the
+# app itself stays a single openable-from-disk document; this only wires it in.
+# The app has no </body> — it ends at its one closing </script> — so that is
+# the anchor, and the check below asserts it really is unique before using it.
+SCRIPT_ANCHOR = '</script>'
+SCRIPT_PATCH = '\n<script src="./drive.js"></script>'
+
 
 def newest_revision():
     for d in SOURCE_DIRS:
@@ -59,14 +66,24 @@ def newest_revision():
     sys.exit('No line_studio_r*.html found in:\n  ' + '\n  '.join(SOURCE_DIRS))
 
 
-def apply_patch(html, anchor, patch, label):
+def apply_patch(html, anchor, patch, label, unique=False):
     if patch.strip() in html:
         return html, 'already present'
-    if anchor not in html:
+
+    n = html.count(anchor)
+    if n == 0:
         sys.exit('Cannot deploy: anchor for %s not found.\n'
                  'The app\'s markup changed — re-check the patch against the new revision.\n'
                  '  anchor: %s' % (label, anchor[:70]))
-    return html.replace(anchor, anchor + patch, 1), 'applied'
+    if unique and n != 1:
+        # Appending after the *first* of several would land the patch in the
+        # middle of the document. Better to stop than to guess.
+        sys.exit('Cannot deploy: anchor for %s appears %d times, expected once.\n'
+                 '  anchor: %s' % (label, n, anchor[:70]))
+
+    # anchored on the last occurrence so end-of-document patches stay at the end
+    i = html.rfind(anchor) + len(anchor)
+    return html[:i] + patch + html[i:], 'applied'
 
 
 def main():
@@ -78,6 +95,8 @@ def main():
 
     html, css_state = apply_patch(html, CSS_ANCHOR, CSS_PATCH, 'index-link CSS')
     html, rail_state = apply_patch(html, RAIL_ANCHOR, RAIL_PATCH, 'index-link anchor')
+    html, drive_state = apply_patch(html, SCRIPT_ANCHOR, SCRIPT_PATCH,
+                                    'drive.js script tag', unique=True)
 
     io.open(DEST, 'w', encoding='utf-8', newline='\n').write(html)
 
@@ -85,7 +104,11 @@ def main():
     print('revision %s' % rev)
     print('css      %s' % css_state)
     print('rail     %s' % rail_state)
+    print('drive    %s' % drive_state)
     print('written  line-studio/index.html (%d bytes)' % len(html.encode('utf-8')))
+
+    if not os.path.exists(os.path.join(REPO, 'line-studio', 'drive.js')):
+        print('\nWARNING: line-studio/drive.js is missing — the page will 404 on it.')
 
 
 if __name__ == '__main__':
