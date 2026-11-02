@@ -9,9 +9,11 @@ Static site served by GitHub Pages at <https://jackbron.github.io>.
 | `index.html` | Landing page / project index. Plain HTML, no build step, no dependencies. |
 | `line-studio/index.html` | Line Studio — single-file cooking-mode app. Deployed copy. |
 | `protoboard-studio/` | Protoboard Studio — stripboard layout designer. Deployed copy. |
+| `christmas/` | Christmas party RSVP, potluck and Secret Santa. Static page plus a Cloudflare Worker in `christmas/worker/`. |
 
 Nothing here is built. Every page is hand-written HTML/CSS/JS served as-is, so
-editing a file and pushing is the whole deploy.
+editing a file and pushing is the whole deploy. The one exception is the
+Christmas party's API, a Cloudflare Worker deployed separately with `wrangler`.
 
 ## Adding a project
 
@@ -47,6 +49,8 @@ stranded one level deep. The markup is a small inline house glyph plus an
 | `protoboard-studio/` | `.menubar-right`, after Save | `../` |
 | `choicer-party/` | `.bar-right`, after Leave | `../` |
 | `choicer-party/test/` | `.bar-right`, beside "Back to the booth" | `../../` |
+| `christmas/` | `.hero-top`, top right of the green header | `../` |
+| `christmas/admin/` | `.hero-top`, after Sign out | `../../` |
 
 The icon is inline SVG rather than a glyph or a font so it renders identically
 everywhere. Two of these apps are deployed copies — see the sections below — so
@@ -309,3 +313,135 @@ Not yet: an onboarding explainer and demo pack, a host hand-off (the host's
 package lives only on the host), and the two autoplay-policy edge cases that
 are still being chased on Firefox and phones (waveform before the first Record,
 sound before the mic permission).
+
+## Christmas party (`christmas/`)
+
+An RSVP page for one party: guests vote on the date, claim a potluck dish from a
+list that updates live, leave an email or mobile number, and join a Secret
+Santa that draws itself when the last invited guest replies. The host runs it
+from `christmas/admin/`, which shows everything except who drew whom.
+
+```
+christmas/
+  index.html            guest page
+  admin/index.html      host dashboard
+  css/christmas.css     both pages; light and dark
+  js/api.js             Worker URL (API_DEFAULT), fetch helper, date formatting
+  js/guest.js           code → pick your name → dates → potluck → Secret Santa → home
+  js/admin.js           tabs: overview, dates, potluck, guests, Secret Santa, settings
+  worker/               Cloudflare Worker + Durable Object — the only place data lives
+    src/index.js        CORS, forwards /api/* to the single Party object
+    src/party.js        state, routes, the draw, delivery queue (alarm)
+    src/notify.js       Resend / Brevo email, Twilio SMS, dry-run
+    src/util.js         hashing, tokens, contact parsing
+    wrangler.toml       vars and the Durable Object binding
+```
+
+**How guests get in.** The host sets one party code and adds every guest by
+name. A guest types the code, taps their own name, and the Worker hands that
+browser a random token (only its SHA-256 is stored). After that the code is not
+needed: the token is the guest's identity, kept in `localStorage` and shown on
+their page as a private link (`#k=…`) for a second device. A name can only be
+claimed once; if it was claimed by mistake, the host can **Release** it.
+
+**Why one Durable Object.** All state is one JSON document in one SQLite-backed
+Durable Object, and the object handles one request at a time. That is what
+makes the potluck safe — two guests tapping the last pie at the same moment get
+one yes and one "someone just signed up for that". KV would have let both win.
+
+**Keeping the host blind.** The draw runs on the Worker, and the pairs never
+appear in any response except the giver's own `/api/me`. The admin view is
+built field by field and has no path to them. Three rules close the side doors:
+
+- The host can't edit a guest's contact — otherwise they could point someone's
+  match at themselves. Guests fix their own; a changed address after the draw
+  re-sends automatically.
+- **Release** is refused once names are drawn, because whoever claims the name
+  next would see that guest's match. **Resend** covers a lost link instead.
+- Matches are stored in plain JSON in the Durable Object, and the email/SMS
+  provider's dashboard keeps copies of what it sent. Those are the host's own
+  accounts, so the guarantee is "nothing shows you", not cryptographic. Don't
+  open the Resend / Brevo / Twilio logs until after the party.
+
+**The draw.** Everyone in Secret Santa who has replied goes into one shuffled
+gift chain (A→B→C→…→A, so no two people just swap), with nobody drawing someone
+in their own **household**. If households make a chain impossible it falls back
+to any valid assignment, and failing that reports the problem on the admin page.
+It needs at least 3 people. The host can also **Draw now** without waiting for
+stragglers, or **Cancel** a draw, which discards every match.
+
+**Delivery.** The draw queues one message per Santa and sets a Durable Object
+alarm, which sends them outside the request path and retries transient failures
+twice, a minute apart. The admin page shows delivered / failed per Santa (never
+the content) and has a **Send test** box. Email goes through Resend or Brevo,
+texts through Twilio. Guests can always open their match on the page whether or
+not a message arrived.
+
+### Setting it up
+
+Needs a free Cloudflare account. From `christmas/worker/`:
+
+> In Windows PowerShell, `npm` and `npx` fail with "running scripts is disabled
+> on this system". Type `npm.cmd` and `npx.cmd` instead, or run the commands from
+> Command Prompt or Git Bash.
+
+```bash
+npm install
+npx wrangler login
+npx wrangler secret put ADMIN_PASSWORD
+npx wrangler deploy
+```
+
+`deploy` prints the Worker URL (`https://christmas.<you>.workers.dev`).
+Paste it into `API_DEFAULT` at the top of `christmas/js/api.js`, bump the `?v=`
+on the script tags, and push. Then open `/christmas/admin/`, set a party code in
+**Settings**, and add guests, dates and dishes.
+
+Email or text delivery — set one or both, then use **Send test** on the admin
+page:
+
+| Channel | `wrangler.toml` `[vars]` | Secrets |
+|---|---|---|
+| Resend | `EMAIL_PROVIDER = "resend"`, `EMAIL_FROM = "Santa <santa@yourdomain.com>"` | `EMAIL_API_KEY` |
+| Brevo | `EMAIL_PROVIDER = "brevo"`, `EMAIL_FROM = "Santa <you@gmail.com>"` | `EMAIL_API_KEY` |
+| Twilio | `TWILIO_FROM = "+15551234567"` or a Messaging Service `MG…` SID | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` |
+
+Resend only sends from a domain you have verified with it. Brevo will send from
+a single verified address (a Gmail is fine), so it is the easier choice without
+a domain. US texting through Twilio needs A2P 10DLC or toll-free verification
+before carriers deliver anything, which can take days — start early or stick
+to email.
+
+**Guests are only asked for what can be delivered.** With only Twilio set up,
+the page asks for a mobile number and the Worker refuses an email address (and
+the reverse with only email). Before any channel is configured it takes either.
+
+**A Twilio trial account only texts Verified Caller IDs.** Every guest's number
+has to be added under Phone Numbers ▸ Verified Caller IDs in the Twilio console
+(Twilio sends that guest a code) before the draw, and each text arrives
+prefixed "Sent from your Twilio trial account". A number that isn't verified
+fails at once and shows as failed on the admin page; fix it and press Resend.
+
+**"Sent" means Twilio accepted the message, not that the phone got it.** A
+carrier can still drop it afterwards, and the only record of that is Twilio's
+message log — which also shows the match. So prove delivery with **Send test**
+to your own phone before guests reply, not by reading the log afterwards.
+
+If the site moves off `jackbron.github.io`, update `ALLOWED_ORIGINS` and
+`SITE_URL` in `wrangler.toml` and redeploy.
+
+### Running it locally
+
+```bash
+cd christmas/worker
+cp .dev.vars.example .dev.vars      # ADMIN_PASSWORD + NOTIFY_DRY_RUN=1
+npx wrangler dev --port 8787
+```
+
+Serve the repo on port 4173 (the `landing` launch config) and open
+`http://localhost:4173/christmas/?api=http://127.0.0.1:8787` once — the
+override sticks in `localStorage` until `?api=default`. Dry-run prints every
+message, matches included, to the wrangler terminal instead of sending it, so
+never set `NOTIFY_DRY_RUN` on the deployed Worker.
+
+**Next year:** Settings ▸ Start over wipes the party.

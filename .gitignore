@@ -9,3 +9,8 @@ Cooking_Mode/
 # Protoboard Studio working copy dropped in the repo root. The published copy
 # is protoboard-studio/ (see README); this one carries serve.bat and .claude/.
 Protoboard_Studio/
+
+# Christmas party Worker: dependencies, wrangler's local state, local secrets.
+christmas/worker/node_modules/
+christmas/worker/.wrangler/
+christmas/worker/.dev.vars
