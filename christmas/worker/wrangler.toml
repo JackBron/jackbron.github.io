@@ -7,7 +7,7 @@ compatibility_date = "2026-06-01"
 ALLOWED_ORIGINS = "https://jackbron.github.io,http://localhost:4173"
 SITE_URL = "https://jackbron.github.io/christmas/"
 # "resend" or "brevo" — leave empty to send texts only. The API key is a secret.
-EMAIL_PROVIDER = "brevo"
+EMAIL_PROVIDER = ""
 # Resend: an address on a domain you've verified there. Brevo: a verified sender.
 EMAIL_FROM = "ryanclarkw@gmail.com"
 # Twilio phone number (+15551234567) or Messaging Service SID (MG...).
