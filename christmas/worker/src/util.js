@@ -51,10 +51,6 @@ function b64url(bytes) {
   return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-export function randomToken() {
-  return b64url(crypto.getRandomValues(new Uint8Array(32)));
-}
-
 export function randomId() {
   return b64url(crypto.getRandomValues(new Uint8Array(9)));
 }
@@ -91,39 +87,4 @@ export function shuffle(list) {
     [list[i], list[j]] = [list[j], list[i]];
   }
   return list;
-}
-
-// ---------- contact ----------
-
-export function parseContact(raw) {
-  const v = String(raw ?? "").trim();
-  if (!v) throw new HttpError(400, "Add an email address or a mobile number.");
-  if (v.includes("@")) {
-    if (v.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v)) {
-      throw new HttpError(400, "That email address doesn't look right.");
-    }
-    return { type: "email", value: v };
-  }
-  if (/[a-z]/i.test(v)) throw new HttpError(400, "That doesn't look like an email address or a phone number.");
-  const plus = v.startsWith("+");
-  let d = v.replace(/\D/g, "");
-  // No country code: assume North America, which is what a bare 10-digit number means here.
-  if (!plus && d.length === 10) d = "1" + d;
-  else if (!plus && !(d.length === 11 && d.startsWith("1"))) {
-    throw new HttpError(400, "Include the country code for numbers outside the US, like +44 7700 900123.");
-  }
-  if (d.length < 8 || d.length > 15) throw new HttpError(400, "That phone number doesn't look right.");
-  return { type: "sms", value: "+" + d };
-}
-
-// ---------- dates ----------
-
-export function formatDate(d) {
-  if (!d) return "";
-  const day = new Date(d.date + "T12:00:00Z").toLocaleDateString("en-US", {
-    timeZone: "UTC", weekday: "long", month: "long", day: "numeric",
-  });
-  if (!d.time) return day;
-  const [h, m] = d.time.split(":").map(Number);
-  return `${day} at ${((h + 11) % 12) + 1}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
 }

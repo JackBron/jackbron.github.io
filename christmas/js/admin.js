@@ -99,8 +99,6 @@
     if (!S.guests.length) todo.push(["guests", "Add guests"]);
     if (!S.dates.length) todo.push(["dates", "Add dates"]);
     if (!S.foods.length) todo.push(["food", "Add dishes"]);
-    const p = S.providers;
-    if (!p.email && !p.sms) todo.push(["santa", "Configure email or text delivery"]);
     const final = S.dates.find((d) => d.id === S.finalDateId);
     const lead = leader();
     return `
@@ -130,17 +128,12 @@
   }
 
   function santaStatus() {
-    if (S.draw) {
-      const sent = countBy((g) => ["sent", "dry-run"].includes(g.notify?.status));
-      const failed = countBy((g) => g.notify?.status === "failed");
-      return `Drawn ${new Date(S.draw.at).toLocaleString()} for ${S.draw.participants} people. ${sent} sent${failed ? `, <b style="color:var(--red)">${failed} failed</b>` : ""}.`;
-    }
+    if (S.draw) return `Drawn ${new Date(S.draw.at).toLocaleString()} for ${S.draw.participants} people. Guests see their match on the RSVP page.`;
     const waiting = S.guests.filter((g) => !g.respondedAt);
-    if (S.drawError) return esc(S.drawError);
     if (!S.guests.length) return "Add guests first.";
     return waiting.length
-      ? `Waiting on ${plural(waiting.length, "guest")}: ${esc(waiting.map((g) => g.name).join(", "))}. Names are drawn when everyone has responded.`
-      : "All guests have responded.";
+      ? `Not drawn yet. Waiting on ${plural(waiting.length, "guest")}: ${esc(waiting.map((g) => g.name).join(", "))}.`
+      : "Not drawn yet. All guests have responded.";
   }
 
   function dates() {
@@ -210,7 +203,7 @@
 
   function guests() {
     const rows = S.guests.map((g) => editing === g.id
-      ? `<tr><td colspan="6"><form class="inline-edit" data-edit-guest="${g.id}">
+      ? `<tr><td colspan="5"><form class="inline-edit" data-edit-guest="${g.id}">
           <input type="text" name="name" value="${esc(g.name)}" maxlength="60" aria-label="Name" required>
           <input type="text" name="household" value="${esc(g.household)}" maxlength="40" placeholder="Household" aria-label="Household">
           <button class="btn green small">Save</button><button type="button" class="btn ghost small" data-act="cancel-edit">Cancel</button>
@@ -219,11 +212,9 @@
         <td data-label="Guest"><b>${esc(g.name)}</b>${g.household ? `<div class="muted small">${esc(g.household)}</div>` : ""}</td>
         <td data-label="Status">${guestStatus(g)}</td>
         <td data-label="Bringing">${esc(g.food) || '<span class="muted">—</span>'}</td>
-        <td data-label="Contact">${g.contact ? esc(g.contact.value) : '<span class="muted">—</span>'}</td>
         <td data-label="Santa">${g.respondedAt || g.claimed ? (g.santa ? "In" : "Out") : '<span class="muted">—</span>'}</td>
         <td class="actions">
           <button class="btn ghost small" data-edit="${g.id}">Edit</button>
-          ${g.claimed && !g.inDraw ? `<button class="btn ghost small" data-release="${g.id}" title="Free this name so it can be claimed again">Release</button>` : ""}
           ${g.inDraw ? "" : `<button class="btn ghost small" data-del-guest="${g.id}">Remove</button>`}
         </td>
       </tr>`).join("");
@@ -237,55 +228,22 @@
       </form>
     </section>
     ${S.guests.length ? `<section class="card"><div class="table-scroll"><table class="table stack">
-      <thead><tr><th>Guest</th><th>Status</th><th>Bringing</th><th>Contact</th><th>Santa</th><th></th></tr></thead><tbody>${rows}</tbody>
+      <thead><tr><th>Guest</th><th>Status</th><th>Bringing</th><th>Santa</th><th></th></tr></thead><tbody>${rows}</tbody>
     </table></div>
-    <p class="hint">Release frees a claimed name. It's unavailable after the draw.</p>
     </section>` : ""}`;
   }
 
-  function notifyPill(n) {
-    if (!n) return '<span class="muted">—</span>';
-    const map = { sent: ["ok", "sent"], "dry-run": ["warn", "dry run"], pending: ["warn", "queued"], sending: ["warn", "sending"], failed: ["bad", "failed"] };
-    const [cls, label] = map[n.status] || ["off", n.status];
-    return `<span class="pill ${cls}">${label}</span>${n.error ? `<div class="muted small">${esc(n.error)}</div>` : ""}`;
-  }
-
   function santa() {
-    const p = S.providers;
     const ready = S.guests.filter((g) => g.respondedAt && g.santa);
     const waiting = S.guests.filter((g) => !g.respondedAt);
-    const failed = countBy((g) => g.notify?.status === "failed");
-    const rows = S.guests.filter((g) => g.inDraw).map((g) => `<tr>
-      <td data-label="Guest"><b>${esc(g.name)}</b></td>
-      <td data-label="Sent to">${g.contact ? esc(g.contact.value) : "—"}</td>
-      <td data-label="Delivery">${notifyPill(g.notify)}</td>
-      <td class="actions"><button class="btn ghost small" data-resend="${g.id}">Resend</button></td>
-    </tr>`).join("");
     return `<section class="card">
       <h2>Secret Santa</h2>
-      <p class="lead">Names are drawn when all guests have responded. Matches are sent to each participant and aren't shown here.</p>
+      <p class="lead">Draw names once you have your headcount. Everyone who responded and joined Secret Santa is included. Each guest sees their own match on the RSVP page; matches aren't shown here.</p>
       <p>${santaStatus()}</p>
-      ${S.draw ? `<div class="row" style="flex-wrap:wrap">
-          ${failed ? `<button class="btn primary" data-act="resend-failed">Resend ${plural(failed, "failed message")}</button>` : ""}
-          <button class="btn danger" data-act="cancel-draw">Cancel draw</button>
-        </div>
-        <p class="hint">Cancelling deletes all matches. Names are drawn again later and new messages are sent.</p>`
-      : `<button class="btn green" data-act="draw" ${ready.length < S.minSantas ? "disabled" : ""}>Draw now (${plural(ready.length, "participant")})</button>
+      ${S.draw ? `<button class="btn danger" data-act="cancel-draw">Cancel draw</button>
+        <p class="hint">Cancelling deletes all matches. When you draw again everyone gets a new match.</p>`
+      : `<button class="btn green" data-act="draw" ${ready.length < S.minSantas ? "disabled" : ""}>Draw names (${plural(ready.length, "participant")})</button>
         <p class="hint">${waiting.length ? `Not included: ${esc(waiting.map((g) => g.name).join(", "))}. ` : ""}Minimum ${S.minSantas} participants.</p>`}
-    </section>
-    ${S.draw ? `<section class="card"><h3>Delivery</h3><div class="table-scroll"><table class="table stack"><thead><tr><th>Santa</th><th>Sent to</th><th>Delivery</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
-      <p class="hint">Guests can also view their match on the RSVP page. Only the guest can change their contact; changing it resends the match.</p></section>` : ""}
-    <section class="card">
-      <h3>Delivery setup</h3>
-      <ul class="summary">
-        <li><span class="k">Email</span><span class="v">${p.email ? `<span class="pill ${p.email === "dry-run" ? "warn" : "ok"}">${esc(p.email)}</span>` : '<span class="pill off">not set up</span>'}</span></li>
-        <li><span class="k">Text</span><span class="v">${p.sms ? `<span class="pill ${p.sms === "dry-run" ? "warn" : "ok"}">${esc(p.sms)}</span>` : '<span class="pill off">not set up</span>'}</span></li>
-      </ul>
-      ${p.email === "dry-run" ? `<p class="note">Dry run is on: messages are logged, not sent. For local testing only.</p>` : ""}
-      <form class="row" id="test-send" style="margin-top:1rem">
-        <label class="field" style="margin:0;flex:2 1 14rem"><span>Test message</span><input type="text" name="contact" placeholder="Phone or email"></label>
-        <button class="btn ghost">Send test</button>
-      </form>
     </section>`;
   }
 
@@ -349,12 +307,6 @@
       if (data.confirm !== "RESET") return toast("Type RESET to confirm.", true);
       return act(() => call("POST", "reset", { confirm: "RESET" }), "Reset");
     }
-    if (form.id === "test-send") {
-      try {
-        const r = await call("POST", "notify/test", { contact: data.contact });
-        toast(r.ok ? `Test ${r.status === "dry-run" ? "logged (dry run)" : "sent"} to ${r.to}` : `Failed: ${r.error}`, !r.ok);
-      } catch {}
-    }
   });
 
   app.addEventListener("change", (e) => {
@@ -393,17 +345,11 @@
       render();
       return app.querySelector("[data-edit-guest] input")?.focus();
     }
-    if (d.release) {
-      const g = S.guests.find((x) => x.id === d.release);
-      if (!confirm(`Release ${g.name}? They will be signed out and the name can be claimed again.`)) return;
-      return act(() => call("POST", `guests/${d.release}/release`, {}), `${g.name} released`);
-    }
     if (d.delGuest) {
       const g = S.guests.find((x) => x.id === d.delGuest);
       if (!confirm(`Remove ${g.name} from the party?`)) return;
       return act(() => call("DELETE", `guests/${d.delGuest}`), `${g.name} removed`);
     }
-    if (d.resend) return act(() => call("POST", "notify/resend", { guestId: d.resend }), "Queued to resend");
 
     switch (d.act) {
       case "cancel-edit": editing = null; return render();
@@ -411,12 +357,11 @@
       case "draw": {
         const waiting = S.guests.filter((g) => !g.respondedAt);
         if (!confirm(waiting.length ? `Draw now? ${waiting.map((g) => g.name).join(", ")} haven't responded and won't be included.` : "Draw names now?")) return;
-        return act(() => call("POST", "draw", {}), "Names drawn and sent");
+        return act(() => call("POST", "draw", {}), "Names drawn");
       }
       case "cancel-draw":
         if (!confirm("Cancel the draw? All matches will be deleted.")) return;
         return act(() => call("POST", "draw/cancel", {}), "Draw cancelled");
-      case "resend-failed": return act(() => call("POST", "notify/resend", {}), "Queued to resend");
     }
   });
 

@@ -1,14 +1,12 @@
 import { DurableObject } from "cloudflare:workers";
-import { providerStatus, sendMessage } from "./notify.js";
 import {
   HttpError, json, readJson, bearer, clip, normCode, firstName,
-  randomToken, randomId, sha256, hmac, timingSafeEqual, shuffle, parseContact, formatDate,
+  randomId, sha256, hmac, timingSafeEqual, shuffle,
 } from "./util.js";
 
 const VOTES = ["yes", "maybe", "no"];
 const CATEGORIES = ["Appetizer", "Main", "Side", "Dessert", "Drinks", "Other"];
 const MIN_SANTAS = 3;
-const MAX_SEND_ATTEMPTS = 3;
 const ADMIN_SESSION_MS = 7 * 24 * 3600e3;
 
 function freshState() {
@@ -19,17 +17,15 @@ function freshState() {
     foods: [],       // { id, name, category, slots }
     guests: [],      // see newGuest()
     draw: null,      // { at, pairs: { giverId: receiverId } } — never leaves this object except in a guest's own view
-    drawError: null,
   };
 }
 
 function newGuest(name, household) {
   return {
     id: randomId(), name, household,
-    tokenHash: null, claimedAt: null, respondedAt: null,
+    claimedAt: null, respondedAt: null,
     votes: {}, foodId: null, writeIn: "", noFood: false,
-    santa: true, contact: null, hints: "",
-    notify: null,    // { status: pending|sending|sent|dry-run|failed, at, attempts, error }
+    santa: true, hints: "",
   };
 }
 
@@ -141,7 +137,7 @@ export class Party extends DurableObject {
   enter(request, body) {
     this.checkCode(request, body.code);
     return json({
-      guests: this.s.guests.map((g) => ({ id: g.id, name: g.name, claimed: !!g.tokenHash })),
+      guests: this.s.guests.map((g) => ({ id: g.id, name: g.name })),
     });
   }
 
@@ -149,30 +145,24 @@ export class Party extends DurableObject {
     this.checkCode(request, body.code);
     const g = this.s.guests.find((x) => x.id === body.guestId);
     if (!g) throw new HttpError(404, "That name is no longer on the guest list.");
-    if (g.tokenHash) {
-      throw new HttpError(409, `${g.name} has already been claimed. Use your private link on the other device, or contact the host.`);
+    if (!g.claimedAt) {
+      g.claimedAt = Date.now();
+      await this.save();
     }
-    const token = randomToken();
-    g.tokenHash = await sha256(token);
-    g.claimedAt = Date.now();
-    await this.save();
-    return json({ token });
+    return json({ token: `${g.id}.${await this.guestSig(g.id)}` });
+  }
+
+  // Guests sign in by picking their name, from as many devices as they like, so
+  // the token is just their id signed with a key only the Worker holds.
+  guestSig(id) {
+    return hmac(this.adminSecret(), `guest:${id}`);
   }
 
   async guestFromAuth(request) {
-    const token = bearer(request);
-    if (token) {
-      const hash = await sha256(token);
-      const g = this.s.guests.find((x) => x.tokenHash === hash);
-      if (g) return g;
-    }
+    const [id, sig] = bearer(request).split(".");
+    const g = id && sig && this.s.guests.find((x) => x.id === id);
+    if (g && timingSafeEqual(sig, await this.guestSig(id))) return g;
     throw new HttpError(401, "This device is no longer signed in. Enter the party code again.");
-  }
-
-  // Contact types a guest may give. Until delivery is set up, either is accepted.
-  channels() {
-    const p = providerStatus(this.env);
-    return p.email || p.sms ? { email: !!p.email, sms: !!p.sms } : { email: true, sms: true };
   }
 
   guestView(g) {
@@ -182,7 +172,7 @@ export class Party extends DurableObject {
     return {
       me: {
         id: g.id, name: g.name, votes: g.votes, foodId: g.foodId, writeIn: g.writeIn, noFood: g.noFood,
-        santa: g.santa, contact: g.contact, hints: g.hints, respondedAt: g.respondedAt,
+        santa: g.santa, hints: g.hints, respondedAt: g.respondedAt,
       },
       party: { details: s.party.details, budget: s.party.budget, santaNote: s.party.santaNote },
       dates: s.dates.map((d) => ({
@@ -191,7 +181,6 @@ export class Party extends DurableObject {
         maybe: s.guests.filter((x) => x.votes[d.id] === "maybe").length,
       })),
       finalDate: s.dates.find((d) => d.id === s.finalDateId) || null,
-      channels: this.channels(),
       categories: CATEGORIES,
       foods: s.foods.map((f) => {
         const takers = s.guests.filter((x) => x.foodId === f.id);
@@ -205,7 +194,6 @@ export class Party extends DurableObject {
         drawn: !!s.draw,
         inDraw: !!receiver,
         match: receiver ? { name: receiver.name, hints: receiver.hints } : null,
-        notify: receiver ? g.notify?.status || null : null,
       },
     };
   }
@@ -247,14 +235,6 @@ export class Party extends DurableObject {
       if (s.draw && v !== g.santa) throw new HttpError(409, "Names have already been drawn.");
       next.santa = v;
     }
-    if ("contact" in b) {
-      next.contact = parseContact(b.contact);
-      if (!this.channels()[next.contact.type]) {
-        throw new HttpError(400, next.contact.type === "email"
-          ? "Please use a mobile number — Secret Santa matches go out by text."
-          : "Please use an email address — Secret Santa matches go out by email.");
-      }
-    }
     if ("hints" in b) next.hints = clip(b.hints, 600);
 
     if (b.submit) {
@@ -262,120 +242,13 @@ export class Party extends DurableObject {
       const missing = [];
       if (!s.finalDateId && s.dates.some((d) => !m.votes[d.id])) missing.push("answer every date");
       if (!m.foodId && !m.writeIn && !m.noFood) missing.push("choose a dish");
-      if (!m.contact) missing.push("add your contact");
-      if (missing.length) throw new HttpError(400, `Please ${missing.join(", ")}.`);
+      if (missing.length) throw new HttpError(400, `Please ${missing.join(" and ")}.`);
     }
 
-    const contactChanged = next.contact && next.contact.value !== g.contact?.value;
     Object.assign(g, next);
     if (b.submit && !g.respondedAt) g.respondedAt = Date.now();
-
-    // A new address after the draw gets the match re-sent there.
-    if (contactChanged && s.draw?.pairs[g.id]) {
-      g.notify = { status: "pending", attempts: 0 };
-      await this.kick();
-    }
-    if (b.submit) await this.autoDraw();
     await this.save();
     return json(this.guestView(g));
-  }
-
-  // ---------- the draw ----------
-
-  async autoDraw() {
-    const s = this.s;
-    if (s.draw || !s.guests.length || s.guests.some((g) => !g.respondedAt)) return;
-    const players = s.guests.filter((g) => g.santa);
-    if (players.length < MIN_SANTAS) {
-      s.drawError = `All guests have responded, but only ${players.length} are in Secret Santa (minimum ${MIN_SANTAS}).`;
-      return;
-    }
-    try {
-      await this.draw(players);
-    } catch (err) {
-      if (!(err instanceof HttpError)) throw err;
-      s.drawError = err.message;
-    }
-  }
-
-  async draw(players) {
-    const s = this.s;
-    const pairs = makePairs(players);
-    s.draw = { at: Date.now(), pairs };
-    s.drawError = null;
-    for (const g of s.guests) g.notify = pairs[g.id] ? { status: "pending", attempts: 0 } : null;
-    await this.kick();
-  }
-
-  async kick(delay = 250) {
-    await this.ctx.storage.setAlarm(Date.now() + delay);
-  }
-
-  matchMessage(giver, receiver) {
-    const p = this.s.party;
-    const date = this.s.dates.find((d) => d.id === this.s.finalDateId);
-    const lines = [
-      "Christmas Party Secret Santa",
-      `${firstName(giver.name)}, you're buying a gift for ${receiver.name}.`,
-    ];
-    if (receiver.hints) lines.push(`Gift ideas: ${receiver.hints}`);
-    if (p.budget) lines.push(`Budget: ${p.budget}`);
-    if (date) lines.push(`Party: ${formatDate(date)}`);
-    if (p.santaNote) lines.push(p.santaNote);
-    if (this.env.SITE_URL) lines.push(`Details: ${this.env.SITE_URL}`);
-    return { subject: "Christmas Party Secret Santa", text: lines.join("\n") };
-  }
-
-  // Sends every pending match. Network calls happen outside the request queue
-  // so guests aren't held up by a slow mail provider.
-  async alarm() {
-    const jobs = await this.serial(async () => {
-      const s = await this.load();
-      if (!s.draw) return [];
-      const now = Date.now();
-      const out = [];
-      for (const g of s.guests) {
-        const n = g.notify;
-        if (!n) continue;
-        // A "sending" left behind by an eviction mid-send goes round again.
-        if (!(n.status === "pending" || (n.status === "sending" && now - n.at > 5 * 60e3))) continue;
-        const receiver = s.guests.find((x) => x.id === s.draw.pairs[g.id]);
-        if (!g.contact || !receiver) {
-          g.notify = { status: "failed", at: now, attempts: n.attempts, error: g.contact ? "Match is missing." : "No email or phone on file." };
-          continue;
-        }
-        g.notify = { ...n, status: "sending", at: now };
-        out.push({ id: g.id, drawAt: s.draw.at, contact: g.contact, msg: this.matchMessage(g, receiver) });
-      }
-      await this.save();
-      return out;
-    });
-    if (!jobs.length) return;
-
-    const results = await Promise.all(jobs.map((j) =>
-      sendMessage(this.env, j.contact, j.msg).then(
-        (r) => ({ ...j, ...r }),
-        (e) => ({ ...j, ok: false, error: String(e?.message || e) }),
-      )));
-
-    await this.serial(async () => {
-      const s = this.s;
-      let retry = false;
-      for (const r of results) {
-        const g = s.guests.find((x) => x.id === r.id);
-        // Skip anything the draw was cancelled, redone or re-queued under us.
-        if (!g || s.draw?.at !== r.drawAt || g.notify?.status !== "sending") continue;
-        const attempts = (g.notify.attempts || 0) + 1;
-        if (r.ok) g.notify = { status: r.status, at: Date.now(), attempts };
-        else if (r.permanent || attempts >= MAX_SEND_ATTEMPTS) g.notify = { status: "failed", at: Date.now(), attempts, error: r.error };
-        else {
-          g.notify = { status: "pending", at: Date.now(), attempts, error: r.error };
-          retry = true;
-        }
-      }
-      await this.save();
-      if (retry) await this.kick(60e3);
-    });
   }
 
   // ---------- admin ----------
@@ -424,13 +297,11 @@ export class Party extends DurableObject {
       foods: s.foods.map((f) => ({ ...f, takenBy: s.guests.filter((g) => g.foodId === f.id).map((g) => g.name) })),
       guests: s.guests.map((g) => ({
         id: g.id, name: g.name, household: g.household,
-        claimed: !!g.tokenHash, claimedAt: g.claimedAt, respondedAt: g.respondedAt,
-        votes: g.votes, food: foodName(g), santa: g.santa, contact: g.contact, hints: g.hints,
-        inDraw: !!s.draw?.pairs[g.id], notify: g.notify,
+        claimed: !!g.claimedAt, claimedAt: g.claimedAt, respondedAt: g.respondedAt,
+        votes: g.votes, food: foodName(g), santa: g.santa, hints: g.hints,
+        inDraw: !!s.draw?.pairs[g.id],
       })),
       draw: s.draw ? { at: s.draw.at, participants: Object.keys(s.draw.pairs).length } : null,
-      drawError: s.drawError,
-      providers: providerStatus(this.env),
       minSantas: MIN_SANTAS,
     };
   }
@@ -507,7 +378,6 @@ export class Party extends DurableObject {
           throw new HttpError(409, `${name} is already on the list. Add a last initial to tell them apart.`);
         }
         s.guests.push(newGuest(name, clip(b.household, 40)));
-        s.drawError = null;
         return done();
       }
       const g = s.guests.find((x) => x.id === id);
@@ -527,16 +397,6 @@ export class Party extends DurableObject {
       if (!action && method === "DELETE") {
         if (drawn) throw new HttpError(409, `${g.name} is part of the Secret Santa draw. Cancel the draw first.`);
         s.guests = s.guests.filter((x) => x !== g);
-        s.drawError = null;
-        await this.autoDraw();
-        return done();
-      }
-      if (action === "release" && method === "POST") {
-        // After the draw, a released spot could be claimed by someone else, who
-        // would then see this guest's match. Resend covers a lost link instead.
-        if (drawn) throw new HttpError(409, `Names are drawn, so ${g.name}'s spot can't be released — use Resend to send their match again.`);
-        g.tokenHash = null;
-        g.claimedAt = null;
         return done();
       }
     }
@@ -545,41 +405,20 @@ export class Party extends DurableObject {
       if (s.draw) throw new HttpError(409, "Names are already drawn.");
       const players = s.guests.filter((g) => g.respondedAt && g.santa);
       if (players.length < MIN_SANTAS) {
-        throw new HttpError(400, `Only ${players.length} people have replied and joined Secret Santa — the draw needs at least ${MIN_SANTAS}.`);
+        throw new HttpError(400, `Only ${players.length} people have responded and joined Secret Santa (minimum ${MIN_SANTAS}).`);
       }
-      await this.draw(players);
+      s.draw = { at: Date.now(), pairs: makePairs(players) };
       return done();
     }
 
     if (section === "draw" && id === "cancel" && method === "POST") {
       s.draw = null;
-      s.drawError = null;
-      for (const g of s.guests) g.notify = null;
       return done();
-    }
-
-    if (section === "notify" && id === "resend" && method === "POST") {
-      if (!s.draw) throw new HttpError(409, "Names haven't been drawn yet.");
-      const targets = s.guests.filter((g) => s.draw.pairs[g.id] && (b.guestId ? g.id === b.guestId : g.notify?.status === "failed"));
-      if (!targets.length) throw new HttpError(400, "Nothing to resend.");
-      for (const g of targets) g.notify = { status: "pending", attempts: 0 };
-      await this.kick();
-      return done();
-    }
-
-    if (section === "notify" && id === "test" && method === "POST") {
-      const contact = parseContact(b.contact);
-      const r = await sendMessage(this.env, contact, {
-        subject: "Christmas Party test message",
-        text: "Christmas Party test message. Secret Santa messages can reach you here.",
-      });
-      return json({ ok: r.ok, status: r.status, error: r.error || null, to: contact.value });
     }
 
     if (section === "reset" && method === "POST") {
       if (b.confirm !== "RESET") throw new HttpError(400, 'Type RESET to confirm.');
       this.s = freshState();
-      await this.ctx.storage.deleteAlarm();
       return done();
     }
 

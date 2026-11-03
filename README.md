@@ -316,10 +316,12 @@ sound before the mic permission).
 
 ## Christmas party (`christmas/`)
 
-An RSVP page for one party: guests vote on the date, claim a potluck dish from a
-list that updates live, leave an email or mobile number, and join a Secret
-Santa that draws itself when the last invited guest replies. The host runs it
-from `christmas/admin/`, which shows everything except who drew whom.
+An RSVP page for one party in two rounds. First guests vote on the date, claim
+a potluck dish from a list that updates live, and say whether they're in the
+Secret Santa. Once the host has a headcount they press **Draw names** on
+`christmas/admin/`, and each guest then sees who they're buying for on their
+own RSVP page. Nothing is emailed or texted. The admin page shows everything
+except who drew whom.
 
 ```
 christmas/
@@ -331,51 +333,34 @@ christmas/
   js/admin.js           tabs: overview, dates, potluck, guests, Secret Santa, settings
   worker/               Cloudflare Worker + Durable Object — the only place data lives
     src/index.js        CORS, forwards /api/* to the single Party object
-    src/party.js        state, routes, the draw, delivery queue (alarm)
-    src/notify.js       Resend / Brevo email, Twilio SMS, dry-run
-    src/util.js         hashing, tokens, contact parsing
+    src/party.js        state, routes, the draw
+    src/util.js         hashing, signing, shuffling
     wrangler.toml       vars and the Durable Object binding
 ```
 
 **How guests get in.** The host sets one party code and adds every guest by
-name. A guest types the code, taps their own name, and the Worker hands that
-browser a random token (only its SHA-256 is stored). After that the code is not
-needed: the token is the guest's identity, kept in `localStorage` and shown on
-their page as a private link (`#k=…`) for a second device. A name can only be
-claimed once; if it was claimed by mistake, the host can **Release** it.
+name. A guest types the code and taps their name, on as many phones or browsers
+as they like. The Worker hands back the guest's id signed with
+`ADMIN_PASSWORD`, which the page keeps in `localStorage`. **Sign out** at the
+bottom of the RSVP page lets someone else use the same device.
 
 **Why one Durable Object.** All state is one JSON document in one SQLite-backed
 Durable Object, and the object handles one request at a time. That is what
 makes the potluck safe — two guests tapping the last pie at the same moment get
-one yes and one "someone just signed up for that". KV would have let both win.
+one yes and one "no longer available". KV would have let both win.
 
-**Keeping the host blind.** The draw runs on the Worker, and the pairs never
-appear in any response except the giver's own `/api/me`. The admin view is
-built field by field and has no path to them. Three rules close the side doors:
+**Keeping the host blind.** The pairs never appear in any response except the
+giver's own `/api/me`, and the admin view is built field by field with no path
+to them. But sign-in is just the party code and a name, so anyone with the
+code — the host included — could pick another guest's name and see their match.
+The guarantee is "nothing shows you", not "you can't look".
 
-- The host can't edit a guest's contact — otherwise they could point someone's
-  match at themselves. Guests fix their own; a changed address after the draw
-  re-sends automatically.
-- **Release** is refused once names are drawn, because whoever claims the name
-  next would see that guest's match. **Resend** covers a lost link instead.
-- Matches are stored in plain JSON in the Durable Object, and the email/SMS
-  provider's dashboard keeps copies of what it sent. Those are the host's own
-  accounts, so the guarantee is "nothing shows you", not cryptographic. Don't
-  open the Resend / Brevo / Twilio logs until after the party.
-
-**The draw.** Everyone in Secret Santa who has replied goes into one shuffled
+**The draw.** Everyone who has responded and opted in goes into one shuffled
 gift chain (A→B→C→…→A, so no two people just swap), with nobody drawing someone
 in their own **household**. If households make a chain impossible it falls back
-to any valid assignment, and failing that reports the problem on the admin page.
-It needs at least 3 people. The host can also **Draw now** without waiting for
-stragglers, or **Cancel** a draw, which discards every match.
-
-**Delivery.** The draw queues one message per Santa and sets a Durable Object
-alarm, which sends them outside the request path and retries transient failures
-twice, a minute apart. The admin page shows delivered / failed per Santa (never
-the content) and has a **Send test** box. Email goes through Resend or Brevo,
-texts through Twilio. Guests can always open their match on the page whether or
-not a message arrived.
+to any valid assignment, and failing that reports the problem. It needs at
+least 3 people. Guests who haven't responded are left out. **Cancel draw**
+discards every match so the host can draw again.
 
 ### Setting it up
 
@@ -392,56 +377,27 @@ npx wrangler secret put ADMIN_PASSWORD
 npx wrangler deploy
 ```
 
-`deploy` prints the Worker URL (`https://christmas.<you>.workers.dev`).
-Paste it into `API_DEFAULT` at the top of `christmas/js/api.js`, bump the `?v=`
-on the script tags, and push. Then open `/christmas/admin/`, set a party code in
+Run `deploy` from `christmas/worker/`, not `christmas/`. From the wrong folder
+wrangler offers to publish the page's files as a Worker instead. `deploy`
+prints the Worker URL (`https://christmas.<you>.workers.dev`). Paste it into
+`API_DEFAULT` at the top of `christmas/js/api.js`, bump the `?v=` on the script
+tags, and push. Then open `/christmas/admin/`, set a party code in
 **Settings**, and add guests, dates and dishes.
 
-Email or text delivery — set one or both, then use **Send test** on the admin
-page:
-
-| Channel | `wrangler.toml` `[vars]` | Secrets |
-|---|---|---|
-| Resend | `EMAIL_PROVIDER = "resend"`, `EMAIL_FROM = "Santa <santa@yourdomain.com>"` | `EMAIL_API_KEY` |
-| Brevo | `EMAIL_PROVIDER = "brevo"`, `EMAIL_FROM = "Santa <you@gmail.com>"` | `EMAIL_API_KEY` |
-| Twilio | `TWILIO_FROM = "+15551234567"` or a Messaging Service `MG…` SID | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` |
-
-Resend only sends from a domain you have verified with it. Brevo will send from
-a single verified address (a Gmail is fine), so it is the easier choice without
-a domain. US texting through Twilio needs A2P 10DLC or toll-free verification
-before carriers deliver anything, which can take days — start early or stick
-to email.
-
-**Guests are only asked for what can be delivered.** With only Twilio set up,
-the page asks for a mobile number and the Worker refuses an email address (and
-the reverse with only email). Before any channel is configured it takes either.
-
-**A Twilio trial account only texts Verified Caller IDs.** Every guest's number
-has to be added under Phone Numbers ▸ Verified Caller IDs in the Twilio console
-(Twilio sends that guest a code) before the draw, and each text arrives
-prefixed "Sent from your Twilio trial account". A number that isn't verified
-fails at once and shows as failed on the admin page; fix it and press Resend.
-
-**"Sent" means Twilio accepted the message, not that the phone got it.** A
-carrier can still drop it afterwards, and the only record of that is Twilio's
-message log — which also shows the match. So prove delivery with **Send test**
-to your own phone before guests reply, not by reading the log afterwards.
-
-If the site moves off `jackbron.github.io`, update `ALLOWED_ORIGINS` and
-`SITE_URL` in `wrangler.toml` and redeploy.
+Changing `ADMIN_PASSWORD` signs every guest out; they just pick their name
+again. If the site moves off `jackbron.github.io`, update `ALLOWED_ORIGINS` in
+`wrangler.toml` and redeploy.
 
 ### Running it locally
 
 ```bash
 cd christmas/worker
-cp .dev.vars.example .dev.vars      # ADMIN_PASSWORD + NOTIFY_DRY_RUN=1
+cp .dev.vars.example .dev.vars      # ADMIN_PASSWORD
 npx wrangler dev --port 8787
 ```
 
 Serve the repo on port 4173 (the `landing` launch config) and open
 `http://localhost:4173/christmas/?api=http://127.0.0.1:8787` once — the
-override sticks in `localStorage` until `?api=default`. Dry-run prints every
-message, matches included, to the wrangler terminal instead of sending it, so
-never set `NOTIFY_DRY_RUN` on the deployed Worker.
+override sticks in `localStorage` until `?api=default`.
 
-**Next year:** Settings ▸ Start over wipes the party.
+**Next year:** Settings ▸ Start over ▸ Reset wipes the party.

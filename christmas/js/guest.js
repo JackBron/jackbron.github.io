@@ -8,7 +8,7 @@
     set(v) { try { v ? localStorage.setItem(TOKEN_KEY, v) : localStorage.removeItem(TOKEN_KEY); } catch {} },
   };
 
-  const STEPS = [["dates", "Date"], ["food", "Potluck"], ["santa", "Secret Santa"], ["review", "Send"]];
+  const STEPS = [["dates", "Date"], ["food", "Potluck"], ["santa", "Secret Santa"], ["review", "Review"]];
   let token = null;
   let me = null;          // last GET /api/me
   let view = "loading";
@@ -18,13 +18,10 @@
   let pollTimer = null;
   let inviteCode = "";    // from an invite link, kept in case this device's old sign-in is stale
 
-  const privateLink = () => `${location.origin}${location.pathname}#k=${token}`;
-
   // ---------- boot ----------
 
   function boot() {
     const h = new URLSearchParams(location.hash.slice(1));
-    if (h.get("k")) tokenStore.set(h.get("k"));
     inviteCode = h.get("code") || "";
     if (location.hash) history.replaceState(null, "", location.pathname + location.search);
     token = tokenStore.get();
@@ -54,8 +51,7 @@
     const m = me.me;
     if (!me.finalDate && me.dates.some((d) => !m.votes[d.id])) return "dates";
     if (!m.foodId && !m.writeIn && !m.noFood) return "food";
-    if (!m.contact) return "santa";
-    return "review";
+    return "santa";
   }
 
   function show(v, arg) {
@@ -140,11 +136,9 @@
     return `<section class="card">
       <h2>Select your name</h2>
       <ul class="names">${entry.guests.map((g) => `
-        <li><button data-pick="${g.id}" aria-pressed="${g.id === entry.pick}" ${g.claimed ? "disabled" : ""}>
-          ${esc(g.name)}${g.claimed ? "<small>taken</small>" : ""}
-        </button></li>`).join("")}
+        <li><button data-pick="${g.id}" aria-pressed="${g.id === entry.pick}">${esc(g.name)}</button></li>`).join("")}
       </ul>
-      <p class="hint" style="margin-top:1rem">Name missing or already taken? Contact the host.</p>
+      <p class="hint" style="margin-top:1rem">Name missing? Contact the host.</p>
       <p class="err" id="who-err" role="alert"></p>
       <div class="nav">
         <button class="btn ghost" data-act="to-code">Back</button>
@@ -225,30 +219,16 @@
     </section>`;
   }
 
-  // Ask only for what the Worker can actually deliver to.
-  function contactInput(ch, value) {
-    const [label, attrs, placeholder] = ch.email && ch.sms
-      ? ["Email or mobile number", 'type="text" inputmode="email" autocomplete="email"', "you@example.com or (555) 123-4567"]
-      : ch.sms
-        ? ["Mobile number", 'type="tel" inputmode="tel" autocomplete="tel"', "(555) 123-4567"]
-        : ["Email address", 'type="email" inputmode="email" autocomplete="email"', "you@example.com"];
-    return `<label class="field"><span>${label}</span>
-        <input ${attrs} id="contact" placeholder="${placeholder}" value="${esc(value || "")}">`;
-  }
-
   function viewSanta() {
     const m = me.me;
     const p = me.party;
     const locked = me.santa.drawn;
     return `${stepper()}<section class="card">
       <h2>Secret Santa</h2>
-      <p class="lead">Names are drawn once everyone has responded, and each person is sent their match. The host can't see the matches.${p.budget ? ` Budget: <b>${esc(p.budget)}</b>.` : ""}</p>
+      <p class="lead">Names are drawn after everyone has RSVPed. Your match will be shown on this page.${p.budget ? ` Budget: <b>${esc(p.budget)}</b>.` : ""}</p>
       ${p.santaNote ? `<p class="note">${esc(p.santaNote)}</p>` : ""}
       <label class="switch"><input type="checkbox" id="santa-in" ${m.santa ? "checked" : ""} ${locked ? "disabled" : ""}><span class="track" aria-hidden="true"></span>Participate in Secret Santa</label>
       ${locked ? `<p class="hint">Names have already been drawn.</p>` : ""}
-      ${contactInput(me.channels, m.contact?.value)}
-        <span class="hint" id="contact-hint">${m.santa ? "Your match will be sent here." : "So the host can contact you."}</span>
-      </label>
       <label class="field" id="hints-field" ${m.santa ? "" : "hidden"}><span>Gift ideas <span class="muted small">(optional)</span></span>
         <textarea id="hints" maxlength="600">${esc(m.hints)}</textarea>
         <span class="hint">Shown to the person who draws your name.</span>
@@ -281,7 +261,6 @@
         ${row("Dates", voteSummary(), "dates")}
         ${row("Bringing", foodLabel(), "food")}
         ${row("Secret Santa", m.santa ? "Yes" : "No", "santa")}
-        ${row("Contact", m.contact?.value, "santa")}
       </ul>
       <p class="err" id="review-err" role="alert"></p>
       ${nav("santa", "submit", m.respondedAt ? "Save" : "Submit")}
@@ -291,19 +270,14 @@
   function santaCard() {
     const s = me.santa;
     const m = me.me;
-    const pr = me.progress;
     if (!m.santa && !s.inDraw) return `<section class="card"><h3>Secret Santa</h3><p class="muted">Not participating.${s.drawn ? "" : ` <button class="btn link" data-go="santa">Change</button>`}</p></section>`;
     if (!s.drawn) {
-      const pct = pr.invited ? Math.round((pr.responded / pr.invited) * 100) : 0;
       return `<section class="card">
         <h3>Secret Santa</h3>
-        <p class="muted">Names will be drawn once everyone has responded.</p>
-        <div class="meter" aria-hidden="true"><i style="width:${pct}%"></i></div>
-        <p class="small muted">${pr.responded} of ${pr.invited} responded. Your match will be sent to ${esc(m.contact?.value || "")}.</p>
+        <p class="muted">Names haven't been drawn yet. Your match will appear here once they are. <button class="btn link" data-go="santa">Change</button></p>
       </section>`;
     }
     if (!s.inDraw) return `<section class="card"><h3>Secret Santa</h3><p class="muted">Names were drawn before you responded, so you weren't included. Contact the host.</p></section>`;
-    const sent = { sent: "Sent to", "dry-run": "Sent to", failed: "Couldn't send to", pending: "Sending to", sending: "Sending to" }[s.notify] || "";
     return `<section class="card">
       <h3>Secret Santa</h3>
       ${revealed
@@ -312,7 +286,6 @@
             ${me.party.budget ? `<p class="small muted">Budget: ${esc(me.party.budget)}</p>` : ""}
             <button class="btn link" data-act="hide">Hide</button></div>`
         : `<button class="reveal" data-act="reveal"><span>Show my match</span></button>`}
-      ${sent ? `<p class="hint">${sent} ${esc(m.contact?.value || "")}.${s.notify === "failed" ? " Update your contact to resend." : ""}</p>` : ""}
     </section>`;
   }
 
@@ -325,16 +298,11 @@
         <ul class="summary">
           <li><span class="k">Date</span><span class="v">${me.finalDate ? esc(fmtDate(me.finalDate)) : `Not set · ${esc(voteSummary())}`}</span><button class="btn link" data-go="dates">${me.finalDate ? "Dates" : "Edit"}</button></li>
           <li><span class="k">Bringing</span><span class="v">${esc(foodLabel()) || '<span class="muted">—</span>'}</span><button class="btn link" data-go="food">Change</button></li>
-          <li><span class="k">Contact</span><span class="v">${esc(m.contact?.value || "")}</span><button class="btn link" data-go="santa">Edit</button></li>
         </ul>
         ${p.details ? `<p class="muted" style="white-space:pre-wrap;margin:1rem 0 0">${esc(p.details)}</p>` : ""}
       </section>
       ${santaCard()}
-      <section class="card">
-        <h3>Private link</h3>
-        <p class="muted small">Opens your RSVP on another device. Don't share it.</p>
-        <div class="linkbox"><input type="text" readonly value="${esc(privateLink())}" aria-label="Your private link" onclick="this.select()"><button class="btn ghost small" data-act="copy-link">Copy</button></div>
-      </section>`;
+      <p class="muted small" style="text-align:center"><button class="btn link" data-act="sign-out">Not ${esc(m.name)}? Sign out</button></p>`;
   }
 
   // ---------- actions ----------
@@ -390,18 +358,11 @@
       await loadMe(true);
     } catch (e) {
       err.textContent = e.message;
-      if (e.status === 409) {
-        try { entry.guests = (await Api.call("POST", "/api/enter", { code: entry.code })).guests; } catch {}
-        entry.pick = null;
-        render();
-        document.getElementById("who-err").textContent = e.message;
-      }
     }
   }
 
   async function santaNext(then) {
-    const contact = document.getElementById("contact").value;
-    const patch = { contact, hints: document.getElementById("hints").value };
+    const patch = { hints: document.getElementById("hints").value };
     if (!me.santa.drawn) patch.santa = document.getElementById("santa-in").checked;
     if (await save(patch, "santa-err")) show(then);
   }
@@ -420,7 +381,6 @@
       if (await save({ votes: { [t.dataset.vote]: t.value } }, "dates-err")) live();
     } else if (t.id === "santa-in") {
       document.getElementById("hints-field").hidden = !t.checked;
-      document.getElementById("contact-hint").textContent = t.checked ? "Your match will be sent here." : "So the host can contact you.";
     }
   });
 
@@ -487,7 +447,12 @@
         return;
       case "reveal": revealed = true; return render();
       case "hide": revealed = false; return render();
-      case "copy-link": return copyText(privateLink());
+      case "sign-out":
+        tokenStore.set(null);
+        token = me = null;
+        revealed = false;
+        hero.innerHTML = "<h1>Christmas Party</h1>";
+        return showCode(inviteCode);
     }
   });
 

@@ -1,5 +1,2 @@
 # Copy to .dev.vars for `npm run dev`. .dev.vars is gitignored.
 ADMIN_PASSWORD=change-me
-# Prints matches to the terminal instead of sending them. Local testing ONLY —
-# it would show you everyone's match, which is the one thing you can't see.
-NOTIFY_DRY_RUN=1
