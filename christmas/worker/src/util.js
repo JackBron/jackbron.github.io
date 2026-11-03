@@ -73,7 +73,7 @@ export function timingSafeEqual(a, b) {
 }
 
 // Unbiased integer in [0, max) from the CSPRNG.
-function randomInt(max) {
+export function randomInt(max) {
   const limit = Math.floor(0x100000000 / max) * max;
   const buf = new Uint32Array(1);
   do crypto.getRandomValues(buf);
@@ -87,4 +87,8 @@ export function shuffle(list) {
     [list[i], list[j]] = [list[j], list[i]];
   }
   return list;
+}
+
+export function randomPin() {
+  return String(randomInt(1e6)).padStart(6, "0");
 }

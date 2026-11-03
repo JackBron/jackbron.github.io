@@ -12,6 +12,8 @@
 
   const guestLink = () => new URL("../", location.href).href;
   const inviteLink = () => `${guestLink()}#code=${encodeURIComponent(S.party.code)}`;
+  const santaLink = () => new URL("../santa/", location.href).href;
+  const pinMessage = (g) => `Secret Santa is live! Go to ${santaLink()} and enter your PIN: ${g.pin}`;
 
   async function call(method, path, body) {
     try {
@@ -78,19 +80,25 @@
     const html = { overview, dates, food, guests, santa, settings }[tab]();
     app.innerHTML = `<nav class="tabs" role="tablist">${TABS.map(([k, l]) =>
       `<button role="tab" data-tab="${k}" aria-selected="${k === tab}">${l}</button>`).join("")}</nav>${html}`;
+    const on = app.querySelector(".tabs [aria-selected=true]");
+    if (on) on.parentNode.scrollLeft = on.offsetLeft - (on.parentNode.clientWidth - on.offsetWidth) / 2;
     document.title = "Christmas Party — Admin";
   }
 
   const countBy = (pred) => S.guests.filter(pred).length;
   const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-  function leader() {
-    let best = null;
-    for (const d of S.dates) {
-      const score = d.votes.yes.length * 2 + d.votes.maybe.length;
-      if (!best || score > best.score) best = { d, score };
-    }
-    return best && best.score > 0 ? best.d : null;
+  const leader = () => S.dates.find((d) => d.id === S.poll.winnerId) || null;
+  const shortDay = (d) => fmtDay(d, { weekday: "short", month: "short", day: "numeric" });
+  const ordinal = (n) => `${n}${["th", "st", "nd", "rd"][(n % 100 >= 11 && n % 100 <= 13) || n % 10 > 3 ? 0 : n % 10]}`;
+  const stamp = (ms) => new Date(ms).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+
+  // datetime-local wants the host's local wall-clock time.
+  function toLocalInput(ms) {
+    if (!ms) return "";
+    const d = new Date(ms);
+    const p2 = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}T${p2(d.getHours())}:${p2(d.getMinutes())}`;
   }
 
   function overview() {
@@ -117,7 +125,8 @@
       </section>` : ""}
       <section class="card">
         <h3>Date</h3>
-        <p class="muted">${final ? `Set: <b>${esc(fmtDate(final))}</b>` : lead ? `Leading: <b>${esc(fmtDate(lead))}</b> (${lead.votes.yes.length} yes, ${lead.votes.maybe.length} maybe)` : "No votes yet."}</p>
+        <p class="muted">${final ? `Set: <b>${esc(fmtDate(final))}</b>` : lead ? `Leading: <b>${esc(fmtDate(lead))}</b> (ranked choice, ${plural(S.poll.ballots, "ballot")})` : "No votes yet."}</p>
+        ${S.party.rsvpBy ? `<p class="muted small">RSVP by ${esc(stamp(S.party.rsvpBy))}${S.party.rsvpBy < Date.now() ? " (passed)" : ""}</p>` : ""}
         <button class="btn ghost small" data-tab="dates">View poll</button>
       </section>
       <section class="card">
@@ -128,7 +137,7 @@
   }
 
   function santaStatus() {
-    if (S.draw) return `Drawn ${new Date(S.draw.at).toLocaleString()} for ${S.draw.participants} people. Guests see their match on the RSVP page.`;
+    if (S.draw) return `Drawn ${esc(stamp(S.draw.at))} for ${S.draw.participants} people.`;
     const waiting = S.guests.filter((g) => !g.respondedAt);
     if (!S.guests.length) return "Add guests first.";
     return waiting.length
@@ -137,33 +146,48 @@
   }
 
   function dates() {
-    const lead = leader();
-    const max = Math.max(1, S.guests.length);
+    const poll = S.poll;
+    const firsts = poll.rounds[0]?.counts || {};
+    const max = Math.max(1, poll.ballots);
+    const nameOf = (id) => {
+      const d = S.dates.find((x) => x.id === id);
+      return d ? shortDay(d) : "?";
+    };
     const rows = S.dates.map((d) => {
-      const y = d.votes.yes.length, m = d.votes.maybe.length, n = d.votes.no.length;
       const final = d.id === S.finalDateId;
-      const names = (k, label) => d.votes[k].length ? `<div><b>${label}:</b> ${esc(d.votes[k].join(", "))}</div>` : "";
+      const first = firsts[d.id] || 0;
+      const byPos = {};
+      for (const r of d.ranks) (byPos[r.pos] ||= []).push(r.name);
+      const who = Object.entries(byPos).map(([pos, names]) => `<div><b>${ordinal(Number(pos))}:</b> ${esc(names.join(", "))}</div>`).join("");
       return `<li class="date-row${final ? " final" : ""}" style="grid-template-columns:1fr">
         <div class="row" style="align-items:center">
-          <div class="date-label"><b>${esc(fmtDay(d))}${d === lead && !final ? ` <span class="pill warn">leading</span>` : ""}${final ? ` <span class="pill ok">set</span>` : ""}</b>${d.time ? `<span>${esc(fmtTime(d))}</span>` : ""}</div>
+          <div class="date-label"><b>${esc(fmtDay(d))}${d.id === poll.winnerId && !final ? ` <span class="pill warn">winning</span>` : ""}${final ? ` <span class="pill ok">set</span>` : ""}</b>${d.time ? `<span>${esc(fmtTime(d))}</span>` : ""}<small>${plural(first, "first choice")} · ranked by ${d.ranks.length}</small></div>
           <span style="flex:0 0 auto;display:flex;gap:.4rem">
             ${final ? `<button class="btn ghost small" data-final="">Unset</button>` : `<button class="btn green small" data-final="${d.id}">Set date</button>`}
             <button class="btn ghost small" data-del-date="${d.id}" aria-label="Remove date">Remove</button>
           </span>
         </div>
-        <div class="bar" aria-hidden="true"><i class="y" style="width:${(y / max) * 100}%"></i><i class="m" style="width:${(m / max) * 100}%"></i><i class="n" style="width:${(n / max) * 100}%"></i></div>
-        <div class="who-list">${names("yes", "Yes")}${names("maybe", "Maybe")}${names("no", "No")}${y + m + n === 0 ? "No votes yet" : ""}</div>
+        <div class="bar" aria-hidden="true"><i class="y" style="width:${(first / max) * 100}%"></i></div>
+        <div class="who-list">${who || "Not ranked yet"}</div>
       </li>`;
     }).join("");
+    const result = poll.ballots ? `<section class="card">
+      <h3>Ranked-choice result</h3>
+      <p>${poll.winnerId ? `Winner: <b>${esc(fmtDate(leader()))}</b>` : "No winner yet."} <span class="muted">${plural(poll.ballots, "ballot")}.</span></p>
+      <ol class="rounds">${poll.rounds.map((r, i) => `<li><b>Round ${i + 1}:</b> ${Object.entries(r.counts).sort((a, b) => b[1] - a[1]).map(([id, n]) => `${esc(nameOf(id))} ${n}`).join(" · ")}${r.eliminated ? ` <span class="muted">→ ${esc(nameOf(r.eliminated))} out</span>` : ""}</li>`).join("")}</ol>
+      ${S.noDates.length ? `<p class="muted small">None work: ${esc(S.noDates.join(", "))}</p>` : ""}
+      <p class="hint">Each ballot counts for its highest-ranked date still in the running. The date with the fewest drops out until one has more than half.</p>
+    </section>` : "";
     return `<section class="card">
       <h2>Dates</h2>
-      <p class="lead">Setting a date shows it to all guests.</p>
+      <p class="lead">Guests rank the dates they can make. Setting a date shows it to all guests.</p>
       <form class="row" id="add-date">
         <label class="field" style="margin:0"><span>Date</span><input type="date" name="date" required></label>
         <label class="field" style="margin:0"><span>Start time <span class="muted small">(optional)</span></span><input type="time" name="time"></label>
         <button class="btn primary">Add date</button>
       </form>
     </section>
+    ${result}
     ${S.dates.length ? `<section class="card"><ul class="dates">${rows}</ul></section>` : ""}`;
   }
 
@@ -236,15 +260,34 @@
   function santa() {
     const ready = S.guests.filter((g) => g.respondedAt && g.santa);
     const waiting = S.guests.filter((g) => !g.respondedAt);
+    const people = S.draw ? S.guests.filter((g) => g.inDraw) : ready;
+    const pins = people.length ? `<section class="card">
+      <h3>PINs</h3>
+      <p class="muted small">${S.draw ? "Text each participant the link and their PIN." : "Send these once you draw names."}</p>
+      <div class="table-scroll"><table class="table stack">
+        <thead><tr><th>Participant</th><th>PIN</th><th></th></tr></thead>
+        <tbody>${people.map((g) => `<tr>
+          <td data-label="Participant"><b>${esc(g.name)}</b></td>
+          <td data-label="PIN"><code class="pin">${esc(g.pin)}</code></td>
+          <td class="actions">
+            ${S.draw ? `<a class="btn green small" href="sms:?&body=${encodeURIComponent(pinMessage(g))}">Text</a>
+            <button class="btn ghost small" data-copy-msg="${g.id}">Copy</button>` : ""}
+            <button class="btn ghost small" data-new-pin="${g.id}">New PIN</button>
+          </td>
+        </tr>`).join("")}</tbody>
+      </table></div>
+      ${S.draw ? `<p class="hint">Text opens your messages app with the link and PIN filled in. Copy copies the same message.</p>` : ""}
+    </section>` : "";
     return `<section class="card">
       <h2>Secret Santa</h2>
-      <p class="lead">Draw names once you have your headcount. Everyone who responded and joined Secret Santa is included. Each guest sees their own match on the RSVP page; matches aren't shown here.</p>
+      <p class="lead">Draw names once you have your headcount. Everyone who responded and joined Secret Santa is included. Guests see their match on the Secret Santa page with their PIN; matches aren't shown here.</p>
       <p>${santaStatus()}</p>
       ${S.draw ? `<button class="btn danger" data-act="cancel-draw">Cancel draw</button>
         <p class="hint">Cancelling deletes all matches. When you draw again everyone gets a new match.</p>`
       : `<button class="btn green" data-act="draw" ${ready.length < S.minSantas ? "disabled" : ""}>Draw names (${plural(ready.length, "participant")})</button>
         <p class="hint">${waiting.length ? `Not included: ${esc(waiting.map((g) => g.name).join(", "))}. ` : ""}Minimum ${S.minSantas} participants.</p>`}
-    </section>`;
+    </section>
+    ${pins}`;
   }
 
   function settings() {
@@ -256,6 +299,8 @@
         <label class="field"><span>Details for guests</span><textarea name="details" maxlength="2000" >${esc(p.details)}</textarea></label>
         ${f("budget", "Secret Santa budget", 'maxlength="40" placeholder="$25"')}
         <label class="field"><span>Secret Santa note</span><textarea name="santaNote" maxlength="500" >${esc(p.santaNote)}</textarea></label>
+        <label class="field"><span>RSVP by</span><input type="datetime-local" name="rsvpBy" value="${toLocalInput(p.rsvpBy)}"></label>
+        <span class="hint">Shows a countdown on the RSVP page. Leave empty for none.</span>
         ${f("code", "Party code", 'maxlength="40" autocapitalize="characters" placeholder="JINGLE"')}
         <span class="hint">Not case-sensitive. Leave empty to block new sign-ins.</span>
         <div class="nav"><button class="btn primary">Save</button></div>
@@ -302,7 +347,10 @@
       editing = null;
       return act(() => call("PUT", `guests/${form.dataset.editGuest}`, data), "Saved");
     }
-    if (form.id === "party") return act(() => call("PUT", "party", data), "Saved");
+    if (form.id === "party") {
+      data.rsvpBy = data.rsvpBy ? new Date(data.rsvpBy).getTime() : null;
+      return act(() => call("PUT", "party", data), "Saved");
+    }
     if (form.id === "reset") {
       if (data.confirm !== "RESET") return toast("Type RESET to confirm.", true);
       return act(() => call("POST", "reset", { confirm: "RESET" }), "Reset");
@@ -331,8 +379,7 @@
     if ("final" in d) return act(() => call("PUT", "final-date", { id: d.final || null }), d.final ? "Date set" : "Date unset");
     if (d.delDate) {
       const date = S.dates.find((x) => x.id === d.delDate);
-      const votes = date.votes.yes.length + date.votes.maybe.length + date.votes.no.length;
-      if (votes && !confirm(`Remove ${fmtDay(date)}? ${plural(votes, "vote")} on it will be lost.`)) return;
+      if (date.ranks.length && !confirm(`Remove ${fmtDay(date)}? ${plural(date.ranks.length, "guest has", "guests have")} ranked it.`)) return;
       return act(() => call("PUT", "dates", datesBody(S.dates.filter((x) => x.id !== d.delDate))), "Date removed");
     }
     if (d.delFood) {
@@ -344,6 +391,12 @@
       editing = d.edit;
       render();
       return app.querySelector("[data-edit-guest] input")?.focus();
+    }
+    if (d.copyMsg) return copyText(pinMessage(S.guests.find((x) => x.id === d.copyMsg)));
+    if (d.newPin) {
+      const g = S.guests.find((x) => x.id === d.newPin);
+      if (!confirm(`Give ${g.name} a new PIN? The old one stops working.`)) return;
+      return act(() => call("POST", `guests/${d.newPin}/pin`, {}), `New PIN for ${g.name}`);
     }
     if (d.delGuest) {
       const g = S.guests.find((x) => x.id === d.delGuest);

@@ -316,25 +316,29 @@ sound before the mic permission).
 
 ## Christmas party (`christmas/`)
 
-An RSVP page for one party in two rounds. First guests vote on the date, claim
-a potluck dish from a list that updates live, and say whether they're in the
-Secret Santa. Once the host has a headcount they press **Draw names** on
-`christmas/admin/`, and each guest then sees who they're buying for on their
-own RSVP page. Nothing is emailed or texted. The admin page shows everything
-except who drew whom.
+An RSVP page for one party in two rounds. First guests rank the dates they can
+make, claim a potluck dish from a list that updates live, and say whether
+they're in the Secret Santa, ideally before the **RSVP by** deadline counting
+down in the header. Once the host has a headcount they press **Draw names** on
+`christmas/admin/` and text each participant the Secret Santa link and their
+PIN. Nothing is sent automatically. The admin page shows everything except who
+drew whom.
 
 ```
 christmas/
-  index.html            guest page
+  index.html            guest RSVP page
+  santa/index.html      Secret Santa page: PIN in, match out
   admin/index.html      host dashboard
-  css/christmas.css     both pages; light and dark
-  js/api.js             Worker URL (API_DEFAULT), fetch helper, date formatting
-  js/guest.js           code → pick your name → dates → potluck → Secret Santa → home
+  css/christmas.css     all three pages; light and dark, phone first
+  js/api.js             Worker URL (API_DEFAULT), fetch helper, formatting, icons,
+                        the RSVP countdown, the header lights and tree
+  js/guest.js           code → pick your name → rank dates → potluck → Secret Santa → home
+  js/santa.js           PIN sign-in and the reveal
   js/admin.js           tabs: overview, dates, potluck, guests, Secret Santa, settings
   worker/               Cloudflare Worker + Durable Object — the only place data lives
     src/index.js        CORS, forwards /api/* to the single Party object
-    src/party.js        state, routes, the draw
-    src/util.js         hashing, signing, shuffling
+    src/party.js        state, routes, the ranked-choice count, the draw
+    src/util.js         hashing, signing, shuffling, PINs
     wrangler.toml       vars and the Durable Object binding
 ```
 
@@ -344,23 +348,43 @@ as they like. The Worker hands back the guest's id signed with
 `ADMIN_PASSWORD`, which the page keeps in `localStorage`. **Sign out** at the
 bottom of the RSVP page lets someone else use the same device.
 
+**Ranking the dates.** Guests tap dates in order of preference and can leave
+out any they can't make, or say none work. The admin **Dates** tab counts the
+ballots by instant runoff: each ballot counts for its highest-ranked date still
+in the running, and the date with the fewest drops out until one has more than
+half. Ties go to the date ranked higher overall, then the earlier date. The
+rounds are shown so the result can be checked. Setting a date is still the
+host's call.
+
+**RSVP by.** An optional deadline in **Settings**. The RSVP page shows it as a
+tag with a live countdown in the header corner. It's a reminder only: RSVPs
+stay open after it passes.
+
+**Secret Santa PINs.** Every guest gets a random 6-digit PIN when they're added.
+The RSVP page never shows a match; guests who opt in are told a PIN will come
+with the Secret Santa link once it's live. After the draw, the admin **Secret
+Santa** tab lists each participant's PIN with a **Text** button (opens the
+phone's messages app with the link and PIN filled in) and **Copy**. **New PIN**
+replaces one that went to the wrong person. `/christmas/santa/` takes the PIN
+alone and shows that guest's match; wrong PINs are limited to 10 per 10
+minutes per IP.
+
 **Why one Durable Object.** All state is one JSON document in one SQLite-backed
 Durable Object, and the object handles one request at a time. That is what
 makes the potluck safe — two guests tapping the last pie at the same moment get
 one yes and one "no longer available". KV would have let both win.
 
-**Keeping the host blind.** The pairs never appear in any response except the
-giver's own `/api/me`, and the admin view is built field by field with no path
-to them. But sign-in is just the party code and a name, so anyone with the
-code — the host included — could pick another guest's name and see their match.
-The guarantee is "nothing shows you", not "you can't look".
+**Keeping the host blind.** The pairs never appear in any response except to
+the giver after PIN sign-in, and the admin view is built field by field with no
+path to them. But the host can see every PIN, so the host could sign in as
+anyone. The guarantee is "nothing shows you", not "you can't look".
 
 **The draw.** Everyone who has responded and opted in goes into one shuffled
 gift chain (A→B→C→…→A, so no two people just swap), with nobody drawing someone
 in their own **household**. If households make a chain impossible it falls back
 to any valid assignment, and failing that reports the problem. It needs at
 least 3 people. Guests who haven't responded are left out. **Cancel draw**
-discards every match so the host can draw again.
+discards every match so the host can draw again; PINs stay the same.
 
 ### Setting it up
 

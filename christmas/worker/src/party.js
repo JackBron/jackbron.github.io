@@ -1,30 +1,30 @@
 import { DurableObject } from "cloudflare:workers";
 import {
   HttpError, json, readJson, bearer, clip, normCode, firstName,
-  randomId, sha256, hmac, timingSafeEqual, shuffle,
+  randomId, randomPin, sha256, hmac, timingSafeEqual, shuffle,
 } from "./util.js";
 
-const VOTES = ["yes", "maybe", "no"];
 const CATEGORIES = ["Appetizer", "Main", "Side", "Dessert", "Drinks", "Other"];
 const MIN_SANTAS = 3;
 const ADMIN_SESSION_MS = 7 * 24 * 3600e3;
 
 function freshState() {
   return {
-    party: { details: "", budget: "", santaNote: "", code: "" },
+    party: { details: "", budget: "", santaNote: "", code: "", rsvpBy: null }, // rsvpBy: epoch ms
     dates: [],       // { id, date: "YYYY-MM-DD", time: "HH:MM" | "" }
     finalDateId: null,
     foods: [],       // { id, name, category, slots }
     guests: [],      // see newGuest()
-    draw: null,      // { at, pairs: { giverId: receiverId } } — never leaves this object except in a guest's own view
+    draw: null,      // { at, pairs: { giverId: receiverId } } — only leaves this object for the giver, after PIN sign-in
   };
 }
 
-function newGuest(name, household) {
+function newGuest(name, household, pin) {
   return {
-    id: randomId(), name, household,
+    id: randomId(), name, household, pin,  // pin: the Secret Santa sign-in the host texts out
     claimedAt: null, respondedAt: null,
-    votes: {}, foodId: null, writeIn: "", noFood: false,
+    rank: [], noDates: false,              // rank: date ids, favourite first
+    foodId: null, writeIn: "", noFood: false,
     santa: true, hints: "",
   };
 }
@@ -81,8 +81,35 @@ export class Party extends DurableObject {
   }
 
   async load() {
-    if (!this.s) this.s = (await this.ctx.storage.get("state")) || freshState();
+    if (!this.s) {
+      this.s = (await this.ctx.storage.get("state")) || freshState();
+      if (this.migrate()) await this.save();
+    }
     return this.s;
+  }
+
+  // Saves from before ranked dates and PINs. Saved straight away so a PIN the
+  // host has already seen can't change under them.
+  migrate() {
+    const s = this.s;
+    let changed = false;
+    if (s.party.rsvpBy === undefined) s.party.rsvpBy = null;
+    for (const g of s.guests) {
+      if (!Array.isArray(g.rank)) Object.assign(g, { rank: [], noDates: false });
+      if ("votes" in g) delete g.votes;
+      if (!g.pin) {
+        g.pin = this.newPin();
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  newPin() {
+    const taken = new Set(this.s.guests.map((g) => g.pin));
+    let pin;
+    do pin = randomPin(); while (taken.has(pin));
+    return pin;
   }
 
   async save() {
@@ -107,7 +134,9 @@ export class Party extends DurableObject {
     const body = method === "GET" || method === "DELETE" ? {} : await readJson(request);
     await this.load();
 
+    if (path === "/api/info" && method === "GET") return json({ open: !!this.s.party.code, rsvpBy: this.s.party.rsvpBy });
     if (path === "/api/enter" && method === "POST") return this.enter(request, body);
+    if (path === "/api/santa" && method === "POST") return this.santaLogin(request, body);
     if (path === "/api/claim" && method === "POST") return this.claim(request, body);
     if (path === "/api/me") {
       const g = await this.guestFromAuth(request);
@@ -165,21 +194,16 @@ export class Party extends DurableObject {
     throw new HttpError(401, "This device is no longer signed in. Enter the party code again.");
   }
 
+  // The RSVP page never carries the match: that needs the PIN (santaLogin).
   guestView(g) {
     const s = this.s;
-    const receiverId = s.draw?.pairs[g.id];
-    const receiver = receiverId && s.guests.find((x) => x.id === receiverId);
     return {
       me: {
-        id: g.id, name: g.name, votes: g.votes, foodId: g.foodId, writeIn: g.writeIn, noFood: g.noFood,
+        id: g.id, name: g.name, rank: g.rank, noDates: g.noDates, foodId: g.foodId, writeIn: g.writeIn, noFood: g.noFood,
         santa: g.santa, hints: g.hints, respondedAt: g.respondedAt,
       },
-      party: { details: s.party.details, budget: s.party.budget, santaNote: s.party.santaNote },
-      dates: s.dates.map((d) => ({
-        ...d,
-        yes: s.guests.filter((x) => x.votes[d.id] === "yes").length,
-        maybe: s.guests.filter((x) => x.votes[d.id] === "maybe").length,
-      })),
+      party: { details: s.party.details, budget: s.party.budget, santaNote: s.party.santaNote, rsvpBy: s.party.rsvpBy },
+      dates: s.dates,
       finalDate: s.dates.find((d) => d.id === s.finalDateId) || null,
       categories: CATEGORIES,
       foods: s.foods.map((f) => {
@@ -189,28 +213,42 @@ export class Party extends DurableObject {
       extras: s.guests
         .filter((x) => x.id !== g.id && x.writeIn)
         .map((x) => ({ who: firstName(x.name), dish: x.writeIn })),
-      progress: { invited: s.guests.length, responded: s.guests.filter((x) => x.respondedAt).length },
-      santa: {
-        drawn: !!s.draw,
-        inDraw: !!receiver,
-        match: receiver ? { name: receiver.name, hints: receiver.hints } : null,
-      },
+      santa: { drawn: !!s.draw, inDraw: !!s.draw?.pairs[g.id] },
     };
+  }
+
+  async santaLogin(request, body) {
+    const s = this.s;
+    if (!s.draw) throw new HttpError(409, "Secret Santa isn't live yet.");
+    const b = this.bucket(request, "pin", 10, 10 * 60e3);
+    const pin = String(body.pin ?? "").replace(/\D/g, "");
+    const g = pin.length === 6 && s.guests.find((x) => x.pin === pin);
+    if (!g) {
+      b.n++;
+      throw new HttpError(403, "That PIN doesn't match. Check the text from the host.");
+    }
+    const receiver = s.guests.find((x) => x.id === s.draw.pairs[g.id]);
+    return json({
+      name: g.name,
+      match: receiver ? { name: receiver.name, hints: receiver.hints } : null,
+      party: { budget: s.party.budget, santaNote: s.party.santaNote },
+      finalDate: s.dates.find((d) => d.id === s.finalDateId) || null,
+    });
   }
 
   async updateGuest(g, b) {
     const s = this.s;
     const next = {};
 
-    if ("votes" in b) {
-      if (!b.votes || typeof b.votes !== "object") throw new HttpError(400, "Malformed votes.");
-      next.votes = {};
-      for (const d of s.dates) {
-        const v = b.votes[d.id] ?? g.votes[d.id];
-        if (v === undefined) continue;
-        if (!VOTES.includes(v)) throw new HttpError(400, "Votes are yes, maybe or no.");
-        next.votes[d.id] = v;
-      }
+    if ("rank" in b) {
+      if (!Array.isArray(b.rank)) throw new HttpError(400, "Malformed ranking.");
+      const ids = new Set(s.dates.map((d) => d.id));
+      next.rank = [...new Set(b.rank)].filter((id) => ids.has(id));
+      if (next.rank.length) next.noDates = false;
+    }
+    if ("noDates" in b) {
+      next.noDates = !!b.noDates;
+      if (next.noDates) next.rank = [];
     }
 
     if ("food" in b) {
@@ -240,7 +278,7 @@ export class Party extends DurableObject {
     if (b.submit) {
       const m = { ...g, ...next };
       const missing = [];
-      if (!s.finalDateId && s.dates.some((d) => !m.votes[d.id])) missing.push("answer every date");
+      if (!s.finalDateId && s.dates.length && !m.rank.length && !m.noDates) missing.push("rank the dates you can make");
       if (!m.foodId && !m.writeIn && !m.noFood) missing.push("choose a dish");
       if (missing.length) throw new HttpError(400, `Please ${missing.join(" and ")}.`);
     }
@@ -278,6 +316,36 @@ export class Party extends DurableObject {
     }
   }
 
+  // Instant runoff: each ballot counts for its highest-ranked date still in the
+  // running, and the weakest date drops out until one has a majority. Ties go
+  // to the date ranked higher overall, then to the earlier date.
+  tally() {
+    const s = this.s;
+    const ballots = s.guests.map((g) => g.rank).filter((r) => r.length);
+    const score = Object.fromEntries(s.dates.map((d) => [d.id, 0]));
+    for (const r of ballots) r.forEach((id, i) => { score[id] += s.dates.length - i; });
+    let alive = s.dates.map((d) => d.id);
+    const rounds = [];
+    while (alive.length && ballots.length) {
+      const counts = Object.fromEntries(alive.map((id) => [id, 0]));
+      let total = 0;
+      for (const r of ballots) {
+        const top = r.find((id) => id in counts);
+        if (top) {
+          counts[top]++;
+          total++;
+        }
+      }
+      const order = alive.slice().sort((a, b) => counts[b] - counts[a] || score[b] - score[a]);
+      const round = { counts, total };
+      rounds.push(round);
+      if (alive.length === 1 || counts[order[0]] * 2 > total) return { ballots: ballots.length, winnerId: order[0], rounds };
+      round.eliminated = order[order.length - 1];
+      alive = alive.filter((id) => id !== round.eliminated);
+    }
+    return { ballots: ballots.length, winnerId: null, rounds };
+  }
+
   // Everything the host may see. Deliberately has no path to s.draw.pairs.
   adminView() {
     const s = this.s;
@@ -291,14 +359,19 @@ export class Party extends DurableObject {
       categories: CATEGORIES,
       dates: s.dates.map((d) => ({
         ...d,
-        votes: Object.fromEntries(VOTES.map((v) => [v, s.guests.filter((g) => g.votes[d.id] === v).map((g) => g.name)])),
+        ranks: s.guests
+          .filter((g) => g.rank.includes(d.id))
+          .map((g) => ({ name: g.name, pos: g.rank.indexOf(d.id) + 1 }))
+          .sort((a, b) => a.pos - b.pos),
       })),
+      poll: this.tally(),
+      noDates: s.guests.filter((g) => g.noDates).map((g) => g.name),
       finalDateId: s.finalDateId,
       foods: s.foods.map((f) => ({ ...f, takenBy: s.guests.filter((g) => g.foodId === f.id).map((g) => g.name) })),
       guests: s.guests.map((g) => ({
-        id: g.id, name: g.name, household: g.household,
+        id: g.id, name: g.name, household: g.household, pin: g.pin,
         claimed: !!g.claimedAt, claimedAt: g.claimedAt, respondedAt: g.respondedAt,
-        votes: g.votes, food: foodName(g), santa: g.santa, hints: g.hints,
+        rank: g.rank, noDates: g.noDates, food: foodName(g), santa: g.santa, hints: g.hints,
         inDraw: !!s.draw?.pairs[g.id],
       })),
       draw: s.draw ? { at: s.draw.at, participants: Object.keys(s.draw.pairs).length } : null,
@@ -319,11 +392,16 @@ export class Party extends DurableObject {
     if (section === "party" && method === "PUT") {
       const code = normCode(b.code ?? s.party.code);
       if (code && (code.length < 4 || code.length > 40)) throw new HttpError(400, "The party code should be 4–40 characters.");
+      let rsvpBy = "rsvpBy" in b ? b.rsvpBy : s.party.rsvpBy;
+      if (rsvpBy === "" || rsvpBy == null) rsvpBy = null;
+      else if (!(Number(rsvpBy) > 0 && Number(rsvpBy) < 4102444800000)) throw new HttpError(400, "That RSVP date doesn't look right.");
+      else rsvpBy = Number(rsvpBy);
       s.party = {
         details: clip(b.details ?? s.party.details, 2000),
         budget: clip(b.budget ?? s.party.budget, 40),
         santaNote: clip(b.santaNote ?? s.party.santaNote, 500),
         code,
+        rsvpBy,
       };
       return done();
     }
@@ -338,7 +416,7 @@ export class Party extends DurableObject {
       });
       dates.sort((a, b2) => (a.date + a.time).localeCompare(b2.date + b2.time));
       const ids = new Set(dates.map((d) => d.id));
-      for (const g of s.guests) for (const k of Object.keys(g.votes)) if (!ids.has(k)) delete g.votes[k];
+      for (const g of s.guests) g.rank = g.rank.filter((k) => ids.has(k));
       if (!ids.has(s.finalDateId)) s.finalDateId = null;
       s.dates = dates;
       return done();
@@ -377,7 +455,7 @@ export class Party extends DurableObject {
         if (s.guests.some((g) => g.name.toLowerCase() === name.toLowerCase())) {
           throw new HttpError(409, `${name} is already on the list. Add a last initial to tell them apart.`);
         }
-        s.guests.push(newGuest(name, clip(b.household, 40)));
+        s.guests.push(newGuest(name, clip(b.household, 40), this.newPin()));
         return done();
       }
       const g = s.guests.find((x) => x.id === id);
@@ -392,6 +470,10 @@ export class Party extends DurableObject {
         }
         g.name = name;
         g.household = clip(b.household ?? g.household, 40);
+        return done();
+      }
+      if (action === "pin" && method === "POST") {
+        g.pin = this.newPin();
         return done();
       }
       if (!action && method === "DELETE") {
