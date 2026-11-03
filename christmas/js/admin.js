@@ -200,7 +200,7 @@
         <td data-label="Claimed by">${f.takenBy.length ? esc(f.takenBy.join(", ")) : '<span class="muted">open</span>'}${f.takenBy.length > f.slots ? ' <span class="pill bad">over</span>' : ""}</td>
         <td class="actions"><button class="btn ghost small" data-del-food="${f.id}">Remove</button></td>
       </tr>`).join("");
-    const own = S.guests.filter((g) => g.food && !S.foods.some((f) => f.takenBy.includes(g.name)));
+    const own = S.guests.filter((g) => g.custom.length);
     const open = S.foods.reduce((n, f) => n + Math.max(0, f.slots - f.takenBy.length), 0);
     return `<section class="card">
       <h2>Potluck</h2>
@@ -216,7 +216,7 @@
       <p class="muted small" style="margin-top:0">${plural(open, "spot")} open.</p>
       <div class="table-scroll"><table class="table stack"><thead><tr><th>Dish</th><th>Category</th><th>How many</th><th>Claimed by</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
     </section>` : ""}
-    ${own.length ? `<section class="card"><h3>Other dishes</h3><ul class="summary">${own.map((g) => `<li><span class="k">${esc(g.name)}</span><span class="v">${esc(g.food)}</span></li>`).join("")}</ul></section>` : ""}`;
+    ${own.length ? `<section class="card"><h3>Other dishes</h3><ul class="summary">${own.map((g) => `<li><span class="k">${esc(g.name)}</span><span class="v">${esc(g.custom.join(", "))}</span></li>`).join("")}</ul></section>` : ""}`;
   }
 
   function guestStatus(g) {

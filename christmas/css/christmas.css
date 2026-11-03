@@ -211,7 +211,7 @@ form > .btn.block{margin-top:1rem}
 .nav .btn.primary,.nav .btn.green{flex:1}
 
 label.field{display:block;margin:1rem 0 0}
-label.field > span{display:block;font-weight:600;font-size:.92rem;margin-bottom:.35rem}
+label.field > span,form.field > label{display:block;font-weight:600;font-size:.92rem;margin-bottom:.35rem}
 input[type=text],input[type=email],input[type=tel],input[type=password],input[type=date],input[type=time],input[type=datetime-local],input[type=number],select,textarea{
   width:100%;font:inherit;font-size:max(16px,1em);color:var(--ink);background:var(--bg);
   border:1px solid var(--line2);border-radius:12px;padding:.75rem .85rem;min-height:48px;
@@ -315,6 +315,18 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--green);b
   background:var(--green-soft);border-radius:12px;padding:.7rem .9rem;margin-bottom:1rem;font-size:.95rem;
 }
 .mine-bar.empty{background:var(--bg2);color:var(--ink2)}
+.mine-bar > span:first-child{font-weight:600}
+.chips{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:.4rem;flex:1 1 100%}
+.chips li{
+  display:flex;align-items:center;gap:.15rem;max-width:100%;min-height:40px;
+  background:var(--card);border:1px solid var(--green);border-radius:999px;padding:0 .15rem 0 .8rem;
+}
+.chips li span{min-width:0;overflow-wrap:anywhere;font-weight:600;line-height:1.25;padding:.35rem 0}
+.chips button{
+  flex:0 0 auto;width:36px;height:36px;display:grid;place-items:center;cursor:pointer;touch-action:manipulation;
+  border:0;border-radius:50%;background:none;color:var(--red);
+}
+.chips button:hover{background:var(--bg2)}
 .food-group{margin:0 0 1rem}
 .food-group h3{font-family:var(--sans);font-size:.75rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:0 0 .45rem;font-weight:600}
 .foods{list-style:none;margin:0;padding:0;display:grid;gap:.45rem}

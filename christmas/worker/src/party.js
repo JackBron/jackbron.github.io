@@ -6,6 +6,7 @@ import {
 
 const CATEGORIES = ["Appetizer", "Main", "Side", "Dessert", "Drinks", "Other"];
 const MIN_SANTAS = 3;
+const MAX_CUSTOM = 10;  // dishes of their own a guest can add
 const ADMIN_SESSION_MS = 7 * 24 * 3600e3;
 
 function freshState() {
@@ -24,7 +25,7 @@ function newGuest(name, household, pin) {
     id: randomId(), name, household, pin,  // pin: the Secret Santa sign-in the host texts out
     claimedAt: null, respondedAt: null,
     rank: [], noDates: false,              // rank: date ids, favourite first
-    foodId: null, writeIn: "", noFood: false,
+    foodId: null, custom: [], noFood: false,  // custom: dishes of their own, on top of foodId
     santa: true, hints: "",
   };
 }
@@ -97,6 +98,10 @@ export class Party extends DurableObject {
     for (const g of s.guests) {
       if (!Array.isArray(g.rank)) Object.assign(g, { rank: [], noDates: false });
       if ("votes" in g) delete g.votes;
+      if (!Array.isArray(g.custom)) {
+        g.custom = g.writeIn ? [g.writeIn] : [];
+        delete g.writeIn;
+      }
       if (!g.pin) {
         g.pin = this.newPin();
         changed = true;
@@ -199,7 +204,7 @@ export class Party extends DurableObject {
     const s = this.s;
     return {
       me: {
-        id: g.id, name: g.name, rank: g.rank, noDates: g.noDates, foodId: g.foodId, writeIn: g.writeIn, noFood: g.noFood,
+        id: g.id, name: g.name, rank: g.rank, noDates: g.noDates, foodId: g.foodId, custom: g.custom, noFood: g.noFood,
         santa: g.santa, hints: g.hints, respondedAt: g.respondedAt,
       },
       party: { details: s.party.details, budget: s.party.budget, santaNote: s.party.santaNote, rsvpBy: s.party.rsvpBy },
@@ -211,8 +216,8 @@ export class Party extends DurableObject {
         return { ...f, takenBy: takers.map((x) => firstName(x.name)), left: Math.max(0, f.slots - takers.length) };
       }),
       extras: s.guests
-        .filter((x) => x.id !== g.id && x.writeIn)
-        .map((x) => ({ who: firstName(x.name), dish: x.writeIn })),
+        .filter((x) => x.id !== g.id)
+        .flatMap((x) => x.custom.map((dish) => ({ who: firstName(x.name), dish }))),
       santa: { drawn: !!s.draw, inDraw: !!s.draw?.pairs[g.id] },
     };
   }
@@ -255,21 +260,29 @@ export class Party extends DurableObject {
       if (next.noDates) next.rank = [];
     }
 
-    if ("food" in b) {
-      const f = b.food || {};
-      Object.assign(next, { foodId: null, writeIn: "", noFood: false });
-      if (f.dish) {
-        const dish = s.foods.find((x) => x.id === f.dish);
+    // One dish from the host's list plus any number of their own, or nothing.
+    if ("dish" in b) {
+      next.foodId = null;
+      if (b.dish) {
+        const dish = s.foods.find((x) => x.id === b.dish);
         if (!dish) throw new HttpError(404, "That dish is no longer listed.");
         if (g.foodId !== dish.id && s.guests.filter((x) => x.foodId === dish.id).length >= dish.slots) {
           throw new HttpError(409, `${dish.name} is no longer available.`);
         }
-        next.foodId = dish.id;
-      } else if (typeof f.other === "string" && f.other.trim()) {
-        next.writeIn = clip(f.other, 80);
-      } else if (f.none) {
-        next.noFood = true;
+        Object.assign(next, { foodId: dish.id, noFood: false });
       }
+    }
+    if ("custom" in b) {
+      if (!Array.isArray(b.custom)) throw new HttpError(400, "Invalid dish list.");
+      const seen = new Set();
+      const list = b.custom.map((x) => clip(x, 80)).filter((x) => x && !seen.has(x.toLowerCase()) && seen.add(x.toLowerCase()));
+      if (list.length > MAX_CUSTOM) throw new HttpError(400, `You can add up to ${MAX_CUSTOM} dishes of your own.`);
+      next.custom = list;
+      if (list.length) next.noFood = false;
+    }
+    if ("noFood" in b) {
+      next.noFood = !!b.noFood;
+      if (next.noFood) Object.assign(next, { foodId: null, custom: [] });
     }
 
     if ("santa" in b) {
@@ -283,7 +296,7 @@ export class Party extends DurableObject {
       const m = { ...g, ...next };
       const missing = [];
       if (!s.finalDateId && s.dates.length && !m.rank.length && !m.noDates) missing.push("rank the dates you can make");
-      if (!m.foodId && !m.writeIn && !m.noFood) missing.push("choose a dish");
+      if (!m.foodId && !m.custom.length && !m.noFood) missing.push("choose a dish");
       if (missing.length) throw new HttpError(400, `Please ${missing.join(" and ")}.`);
     }
 
@@ -354,9 +367,8 @@ export class Party extends DurableObject {
   adminView() {
     const s = this.s;
     const foodName = (g) => {
-      if (g.foodId) return s.foods.find((f) => f.id === g.foodId)?.name || "";
-      if (g.writeIn) return `${g.writeIn} (own idea)`;
-      return g.noFood ? "Nothing this time" : "";
+      const all = [s.foods.find((f) => f.id === g.foodId)?.name, ...g.custom].filter(Boolean);
+      return all.length ? all.join(", ") : g.noFood ? "Nothing this time" : "";
     };
     return {
       party: s.party,
@@ -375,7 +387,7 @@ export class Party extends DurableObject {
       guests: s.guests.map((g) => ({
         id: g.id, name: g.name, household: g.household, pin: g.pin,
         claimed: !!g.claimedAt, claimedAt: g.claimedAt, respondedAt: g.respondedAt,
-        rank: g.rank, noDates: g.noDates, food: foodName(g), santa: g.santa, hints: g.hints,
+        rank: g.rank, noDates: g.noDates, food: foodName(g), custom: g.custom, santa: g.santa, hints: g.hints,
         inDraw: !!s.draw?.pairs[g.id],
       })),
       draw: s.draw ? { at: s.draw.at, participants: Object.keys(s.draw.pairs).length } : null,

@@ -53,7 +53,7 @@
   function firstOpenStep() {
     const m = me.me;
     if (!me.finalDate && me.dates.length && !m.rank.length && !m.noDates) return "dates";
-    if (!m.foodId && !m.writeIn && !m.noFood) return "food";
+    if (!m.foodId && !m.custom.length && !m.noFood) return "food";
     return "santa";
   }
 
@@ -220,9 +220,13 @@
   function foodLive() {
     const m = me.me;
     const mine = me.foods.find((f) => f.id === m.foodId);
-    const chosen = mine ? mine.name : m.writeIn;
-    const bar = chosen
-      ? `<div class="mine-bar"><span>Bringing: <b>${esc(chosen)}</b></span><button class="btn link" data-food-clear>Change</button></div>`
+    const chip = (name, attr) => `<li><span>${esc(name)}</span><button ${attr} aria-label="Remove ${esc(name)}">${ICON_X}</button></li>`;
+    const chips = [
+      ...(mine ? [chip(mine.name, `data-dish="${mine.id}"`)] : []),
+      ...m.custom.map((x, i) => chip(x, `data-custom-del="${i}"`)),
+    ];
+    const bar = chips.length
+      ? `<div class="mine-bar"><span>Bringing</span><ul class="chips">${chips.join("")}</ul></div>`
       : m.noFood
         ? `<div class="mine-bar"><span>Not bringing a dish</span><button class="btn link" data-food-clear>Change</button></div>`
         : `<div class="mine-bar empty">No dish selected.</div>`;
@@ -249,12 +253,14 @@
   function viewFood() {
     return `${stepper()}<section class="card festive">
       <h2>Potluck</h2>
-      <p class="lead">Choose a dish to bring. Claimed dishes are greyed out.</p>
+      <p class="lead">Choose a dish from the list, add your own, or both. Claimed dishes are greyed out.</p>
       <div id="food-live">${foodLive()}</div>
       <div class="alt">
-        <label class="field" style="margin:0"><span>Other dish</span>
-          <div class="row"><input type="text" id="write-in" maxlength="80" value="${esc(me.me.writeIn)}"><button class="btn ghost" data-act="write-in">Save</button></div>
-        </label>
+        <form id="custom-form" class="field" style="margin:0" autocomplete="off">
+          <label for="custom-in">Add your own dish</label>
+          <div class="row"><input type="text" id="custom-in" maxlength="80" enterkeyhint="done"><button class="btn ghost">Add</button></div>
+          <span class="hint">Add as many as you're bringing.</span>
+        </form>
         <button class="btn link" data-act="no-food" style="justify-self:start">Not bringing a dish</button>
       </div>
       <p class="err" id="food-err" role="alert"></p>
@@ -289,7 +295,7 @@
   function foodLabel() {
     const m = me.me;
     const f = me.foods.find((x) => x.id === m.foodId);
-    return f ? f.name : m.writeIn || (m.noFood ? "Nothing" : "");
+    return [f?.name, ...m.custom].filter(Boolean).join(", ") || (m.noFood ? "Nothing" : "");
   }
 
   function viewReview() {
@@ -405,10 +411,20 @@
     if (await save(patch, "santa-err")) show(then);
   }
 
-  app.addEventListener("submit", (e) => {
+  app.addEventListener("submit", async (e) => {
     if (e.target.id === "code-form") {
       e.preventDefault();
       submitCode(document.getElementById("code").value);
+    }
+    if (e.target.id === "custom-form") {
+      e.preventDefault();
+      const input = document.getElementById("custom-in");
+      const v = input.value.trim();
+      if (!v) return (document.getElementById("food-err").textContent = "Enter a dish first.");
+      if (await save({ custom: [...me.me.custom, v] }, "food-err")) {
+        input.value = "";
+        live();
+      }
     }
   });
 
@@ -443,11 +459,15 @@
     }
     if (d.dish) {
       const mine = d.dish === me.me.foodId;
-      if (await save({ food: mine ? null : { dish: d.dish } }, "food-err")) live();
+      if (await save({ dish: mine ? null : d.dish }, "food-err")) live();
+      return;
+    }
+    if (d.customDel) {
+      if (await save({ custom: me.me.custom.filter((_, i) => i !== Number(d.customDel)) }, "food-err")) live();
       return;
     }
     if ("foodClear" in d) {
-      if (await save({ food: null }, "food-err")) view === "food" ? live() : render();
+      if (await save({ noFood: false }, "food-err")) view === "food" ? live() : render();
       return;
     }
 
@@ -469,18 +489,12 @@
         }
         return show(m.respondedAt ? "home" : "food");
       }
-      case "write-in": {
-        const v = document.getElementById("write-in").value.trim();
-        if (!v) return (document.getElementById("food-err").textContent = "Enter a dish first.");
-        if (await save({ food: { other: v } }, "food-err")) live();
-        return;
-      }
       case "no-food":
-        if (await save({ food: { none: true } }, "food-err")) live();
+        if (await save({ noFood: true }, "food-err")) live();
         return;
       case "food-next": {
         const m = me.me;
-        if (!m.foodId && !m.writeIn && !m.noFood) {
+        if (!m.foodId && !m.custom.length && !m.noFood) {
           document.getElementById("food-err").textContent = "Choose a dish, or select “Not bringing a dish”.";
           return;
         }
