@@ -306,9 +306,17 @@
         <div class="nav"><button class="btn primary">Save</button></div>
       </form>
     </section>
+    <section class="card">
+      <h3>Backup</h3>
+      <p class="muted small">Save the guest list and potluck dishes to a file, and load them back after a reset. Importing adds to what's here and skips names already listed. PINs are kept.</p>
+      <div class="row" style="align-items:center">
+        <button class="btn ghost" data-act="export">Export</button>
+        <label class="btn ghost" style="flex:0 0 auto">Import<input type="file" id="import-file" accept=".json,application/json" hidden></label>
+      </div>
+    </section>
     <section class="card danger-zone">
       <h3>Start over</h3>
-      <p class="muted small">Deletes all guests, votes, dishes and the draw.</p>
+      <p class="muted small">Deletes all guests, votes, dishes and the draw. Export first to keep the guest list and dishes.</p>
       <form class="row" id="reset">
         <label class="field" style="margin:0"><span>Type RESET</span><input type="text" name="confirm" autocomplete="off"></label>
         <button class="btn danger">Reset</button>
@@ -357,8 +365,46 @@
     }
   });
 
+  function exportFile() {
+    const data = {
+      type: "christmas-party",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      guests: S.guests.map((g) => ({ name: g.name, household: g.household || "", pin: g.pin })),
+      foods: S.foods.map((f) => ({ name: f.name, category: f.category, slots: f.slots })),
+    };
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+    a.download = `christmas-party-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    toast(`Exported ${plural(data.guests.length, "guest")} and ${plural(data.foods.length, "dish", "dishes")}`);
+  }
+
+  async function importFile(input) {
+    const file = input.files[0];
+    input.value = "";
+    if (!file) return;
+    let data;
+    try {
+      data = JSON.parse(await file.text());
+    } catch {
+      return toast("That isn't an export file.", true);
+    }
+    if (data?.type !== "christmas-party") return toast("That isn't an export file.", true);
+    try {
+      const r = await call("POST", "import", { guests: data.guests, foods: data.foods });
+      render();
+      const n = r.imported;
+      toast(`Added ${plural(n.guests, "guest")} and ${plural(n.foods, "dish", "dishes")}${n.skipped ? ` (${n.skipped} already listed)` : ""}`);
+    } catch {}
+  }
+
   app.addEventListener("change", (e) => {
     const t = e.target;
+    if (t.id === "import-file") return importFile(t);
     if (t.dataset.slots) {
       const list = S.foods.map((f) => (f.id === t.dataset.slots ? { ...f, slots: Number(t.value) } : f));
       act(() => call("PUT", "foods", foodsBody(list)));
@@ -406,6 +452,7 @@
 
     switch (d.act) {
       case "cancel-edit": editing = null; return render();
+      case "export": return exportFile();
       case "copy-invite": return copyText(inviteLink());
       case "draw": {
         const waiting = S.guests.filter((g) => !g.respondedAt);

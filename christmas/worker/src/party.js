@@ -498,6 +498,42 @@ export class Party extends DurableObject {
       return done();
     }
 
+    // Adds guests and dishes from an export file. Never removes anything, and
+    // skips names that are already listed, so importing twice is harmless.
+    if (section === "import" && method === "POST") {
+      const out = { guests: 0, foods: 0, skipped: 0 };
+      for (const x of Array.isArray(b.guests) ? b.guests.slice(0, 100) : []) {
+        const name = clip(x?.name, 60);
+        if (!name) continue;
+        if (s.guests.length >= 100 || s.guests.some((g) => g.name.toLowerCase() === name.toLowerCase())) {
+          out.skipped++;
+          continue;
+        }
+        // Keep the PIN from the file when it's still free, in case it was already texted out.
+        const pin = /^\d{6}$/.test(x.pin) && !s.guests.some((g) => g.pin === x.pin) ? x.pin : this.newPin();
+        s.guests.push(newGuest(name, clip(x.household, 40), pin));
+        out.guests++;
+      }
+      for (const x of Array.isArray(b.foods) ? b.foods.slice(0, 100) : []) {
+        const name = clip(x?.name, 60);
+        if (!name) continue;
+        if (s.foods.length >= 100 || s.foods.some((f) => f.name.toLowerCase() === name.toLowerCase())) {
+          out.skipped++;
+          continue;
+        }
+        s.foods.push({
+          id: randomId(),
+          name,
+          category: CATEGORIES.includes(x.category) ? x.category : "Other",
+          slots: Math.min(20, Math.max(1, Math.floor(Number(x.slots) || 1))),
+        });
+        out.foods++;
+      }
+      if (!out.guests && !out.foods && !out.skipped) throw new HttpError(400, "That file has no guests or dishes.");
+      await this.save();
+      return json({ ...this.adminView(), imported: out });
+    }
+
     if (section === "reset" && method === "POST") {
       if (b.confirm !== "RESET") throw new HttpError(400, 'Type RESET to confirm.');
       this.s = freshState();
