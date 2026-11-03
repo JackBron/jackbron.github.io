@@ -496,6 +496,7 @@
         return;
       case "sign-out":
         tokenStore.set(null);
+        try { localStorage.removeItem("xmas.pin"); } catch {}  // the Secret Santa page's saved PIN
         token = me = null;
         hero.innerHTML = TITLE;
         return showCode(inviteCode);

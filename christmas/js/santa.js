@@ -5,26 +5,30 @@
     get() { try { return localStorage.getItem(PIN_KEY) || ""; } catch { return ""; } },
     set(v) { try { v ? localStorage.setItem(PIN_KEY, v) : localStorage.removeItem(PIN_KEY); } catch {} },
   };
+  // The RSVP page's sign-in. When present, the Worker only accepts that guest's PIN.
+  const TOKEN_KEY = "xmas.token";
+  const token = (() => { try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; } })();
+  let me = "";            // signed-in guest's name, from GET /api/me
   let data = null;        // POST /api/santa result
   let opened = false;
 
   function viewPin(msg, pin = "") {
     app.innerHTML = `<section class="card festive">
-      <h2>Enter your PIN</h2>
-      <p class="lead">The host texted you a 6-digit PIN.</p>
+      <h2>${me ? `Hi ${esc(firstWord(me))}` : "Enter your PIN"}</h2>
+      <p class="lead">${me ? "Enter the 6-digit PIN the host texted you." : "The host texted you a 6-digit PIN."}</p>
       <form id="pin-form" autocomplete="off">
         <input id="pin" class="code-input pin-input" type="text" inputmode="numeric" autocomplete="one-time-code" aria-label="PIN" value="${esc(pin)}" required>
         <p class="err" id="pin-err" role="alert">${esc(msg || "")}</p>
         <button class="btn primary block">Continue</button>
       </form>
-    </section>`;
+    </section>${me ? signOut(me) : ""}`;
     app.querySelector("#pin").focus();
   }
 
   function viewMatch() {
     const m = data.match;
     if (!m) {
-      app.innerHTML = `<section class="card"><h2>Hi ${esc(firstWord(data.name))}</h2><p class="muted">You're not in this year's draw. Contact the host if that's a mistake.</p></section>${signOut()}`;
+      app.innerHTML = `<section class="card"><h2>Hi ${esc(firstWord(data.name))}</h2><p class="muted">You're not in this year's draw. Contact the host if that's a mistake.</p></section>${signOut(data.name)}`;
       return;
     }
     const p = data.party;
@@ -42,15 +46,15 @@
           <p class="center"><button class="btn link" data-act="hide">Hide</button></p>`
         : `<p class="lead">Tap the gift to see who you're buying for. Keep it to yourself.</p>
           <button class="reveal" data-act="open"><span>Open</span></button>`}
-    </section>${signOut()}`;
+    </section>${signOut(data.name)}`;
   }
 
   const firstWord = (s) => String(s).trim().split(/\s+/)[0];
-  const signOut = () => `<p class="muted small center"><button class="btn link" data-act="sign-out">Not ${esc(firstWord(data.name))}? Sign out</button></p>`;
+  const signOut = (name) => `<p class="muted small center"><button class="btn link" data-act="sign-out">Not ${esc(firstWord(name))}? Sign out</button></p>`;
 
   async function login(pin, quiet) {
     try {
-      data = await Api.call("POST", "/api/santa", { pin });
+      data = await Api.call("POST", "/api/santa", { pin }, token || undefined);
       pinStore.set(pin);
       viewMatch();
     } catch (e) {
@@ -84,6 +88,8 @@
       case "hide": opened = false; return viewMatch();
       case "sign-out":
         pinStore.set(null);
+        // Also signs out of the RSVP page, or the next person would be held to this guest's PIN.
+        if (token) { try { localStorage.removeItem(TOKEN_KEY); } catch {} return location.reload(); }
         data = null;
         opened = false;
         return viewPin();
@@ -92,9 +98,13 @@
 
   if (!Api.configured) {
     app.innerHTML = `<section class="card"><h2>Not configured</h2><p class="muted">Set <code>API_DEFAULT</code> in <code>christmas/js/api.js</code> to the Worker URL.</p></section>`;
-  } else if (pinStore.get()) {
-    login(pinStore.get(), true);
   } else {
-    viewPin();
+    (async () => {
+      if (token) {
+        try { me = (await Api.call("GET", "/api/me", null, token)).me.name; } catch {}
+      }
+      if (pinStore.get()) login(pinStore.get(), true);
+      else viewPin();
+    })();
   }
 })();

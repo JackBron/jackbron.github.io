@@ -221,11 +221,15 @@ export class Party extends DurableObject {
     const s = this.s;
     if (!s.draw) throw new HttpError(409, "Secret Santa isn't live yet.");
     const b = this.bucket(request, "pin", 10, 10 * 60e3);
+    // A device signed in on the RSVP page only accepts that guest's own PIN.
+    const me = bearer(request) ? await this.guestFromAuth(request).catch(() => null) : null;
     const pin = String(body.pin ?? "").replace(/\D/g, "");
     const g = pin.length === 6 && s.guests.find((x) => x.pin === pin);
-    if (!g) {
+    if (!g || (me && g.id !== me.id)) {
       b.n++;
-      throw new HttpError(403, "That PIN doesn't match. Check the text from the host.");
+      throw new HttpError(403, me
+        ? `That isn't ${firstName(me.name)}'s PIN. Check the text from the host.`
+        : "That PIN doesn't match. Check the text from the host.");
     }
     const receiver = s.guests.find((x) => x.id === s.draw.pairs[g.id]);
     return json({
