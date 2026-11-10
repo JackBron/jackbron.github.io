@@ -320,10 +320,18 @@
     if (!m.santa && !s.inDraw) {
       return `<section class="card">${head}<p class="muted">Not participating.${s.drawn ? "" : ` <button class="btn link" data-go="santa">Change</button>`}</p></section>`;
     }
+    const day = me.finalDate ? esc(fmtDay(me.finalDate)) : "";
+    if (s.missedDate && !s.inDraw) {
+      return `<section class="card">${head}
+        <p class="muted">You're not in the draw because you didn't rank ${day}, the party date.${s.drawn ? "" : " If you can make it, add it to your dates."}</p>
+        ${s.drawn ? "" : `<button class="btn link" data-go="dates">Edit dates</button>`}
+      </section>`;
+    }
     if (!s.drawn) {
       return `<section class="card">${head}
         <p class="muted">You're in. ${PIN_NOTE}</p>
         <button class="btn link" data-go="santa">Edit gift ideas</button>
+        ${me.finalDate ? `<p class="muted small opt-out">Can't make ${day}? <button class="btn link" data-act="santa-opt-out">Opt out of Secret Santa</button></p>` : ""}
       </section>`;
     }
     if (!s.inDraw) return `<section class="card">${head}<p class="muted">Names were drawn before you RSVPed, so you weren't included. Contact the host.</p></section>`;
@@ -500,6 +508,12 @@
         }
         return show(m.respondedAt ? "home" : "santa");
       }
+      case "santa-opt-out":
+        if (await save({ santa: false }, null)) {
+          render();
+          toast("You're out of Secret Santa");
+        }
+        return;
       case "santa-next": return santaNext(me.me.respondedAt ? "home" : "review");
       case "submit":
         b.disabled = true;

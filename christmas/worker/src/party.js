@@ -110,6 +110,17 @@ export class Party extends DurableObject {
     return changed;
   }
 
+  // Once the host sets the date, anyone who answered the poll without ranking
+  // it is left out of Secret Santa. Guests who RSVP after it's set never saw
+  // the poll, so they stay in. Adding the date to their ranking puts them back.
+  missedDate(g, dateId = this.s.finalDateId) {
+    return !!dateId && (g.rank.length > 0 || g.noDates) && !g.rank.includes(dateId);
+  }
+
+  inSanta(g) {
+    return !!g.respondedAt && g.santa && !this.missedDate(g);
+  }
+
   newPin() {
     const taken = new Set(this.s.guests.map((g) => g.pin));
     let pin;
@@ -218,7 +229,7 @@ export class Party extends DurableObject {
       extras: s.guests
         .filter((x) => x.id !== g.id)
         .flatMap((x) => x.custom.map((dish) => ({ who: firstName(x.name), dish }))),
-      santa: { drawn: !!s.draw, inDraw: !!s.draw?.pairs[g.id] },
+      santa: { drawn: !!s.draw, inDraw: !!s.draw?.pairs[g.id], missedDate: this.missedDate(g) },
     };
   }
 
@@ -388,7 +399,7 @@ export class Party extends DurableObject {
         id: g.id, name: g.name, household: g.household, pin: g.pin,
         claimed: !!g.claimedAt, claimedAt: g.claimedAt, respondedAt: g.respondedAt,
         rank: g.rank, noDates: g.noDates, food: foodName(g), custom: g.custom, santa: g.santa, hints: g.hints,
-        inDraw: !!s.draw?.pairs[g.id],
+        inDraw: !!s.draw?.pairs[g.id], missedDate: this.missedDate(g),
       })),
       draw: s.draw ? { at: s.draw.at, participants: Object.keys(s.draw.pairs).length } : null,
       minSantas: MIN_SANTAS,
@@ -440,6 +451,10 @@ export class Party extends DurableObject {
 
     if (section === "final-date" && method === "PUT") {
       if (b.id && !s.dates.some((d) => d.id === b.id)) throw new HttpError(404, "No such date.");
+      const lost = s.draw ? s.guests.filter((g) => s.draw.pairs[g.id] && this.missedDate(g, b.id)) : [];
+      if (lost.length) {
+        throw new HttpError(409, `Names are already drawn and ${lost.map((g) => g.name).join(", ")} didn't rank that date. Cancel the draw first.`);
+      }
       s.finalDateId = b.id || null;
       return done();
     }
@@ -501,9 +516,9 @@ export class Party extends DurableObject {
 
     if (section === "draw" && !id && method === "POST") {
       if (s.draw) throw new HttpError(409, "Names are already drawn.");
-      const players = s.guests.filter((g) => g.respondedAt && g.santa);
+      const players = s.guests.filter((g) => this.inSanta(g));
       if (players.length < MIN_SANTAS) {
-        throw new HttpError(400, `Only ${players.length} people have responded and joined Secret Santa (minimum ${MIN_SANTAS}).`);
+        throw new HttpError(400, `Only ${players.length} people can be in Secret Santa (minimum ${MIN_SANTAS}).`);
       }
       s.draw = { at: Date.now(), pairs: makePairs(players) };
       return done();

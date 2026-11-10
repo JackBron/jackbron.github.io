@@ -13,6 +13,9 @@
   const guestLink = () => new URL("../", location.href).href;
   const inviteLink = () => `${guestLink()}#code=${encodeURIComponent(S.party.code)}`;
   const santaLink = () => new URL("../santa/", location.href).href;
+  // Joined Secret Santa but didn't rank the party date, so the Worker leaves them out.
+  const missed = () => S.guests.filter((g) => g.santa && g.missedDate);
+  const missedFor = (id) => S.guests.filter((g) => g.santa && (g.rank.length || g.noDates) && !g.rank.includes(id));
   const pinMessage = (g) => `Secret Santa is live! Go to ${santaLink()} and enter your PIN: ${g.pin}`;
 
   async function call(method, path, body) {
@@ -114,7 +117,7 @@
         <div class="stat"><b>${S.guests.length}</b><span>invited</span></div>
         <div class="stat"><b>${countBy((g) => g.claimed)}</b><span>signed in</span></div>
         <div class="stat"><b>${countBy((g) => g.respondedAt)}</b><span>responded</span></div>
-        <div class="stat"><b>${countBy((g) => g.santa && g.respondedAt)}</b><span>in Secret Santa</span></div>
+        <div class="stat"><b>${countBy((g) => g.santa && g.respondedAt && !g.missedDate)}</b><span>in Secret Santa</span></div>
       </div>
       ${todo.length ? `<section class="card"><h3>Setup</h3><ul class="summary">${todo.map(([t, l]) =>
         `<li><span class="v">${l}</span><button class="btn link" data-tab="${t}">Go</button></li>`).join("")}</ul></section>` : ""}
@@ -236,7 +239,7 @@
         <td data-label="Guest"><b>${esc(g.name)}</b>${g.household ? `<div class="muted small">${esc(g.household)}</div>` : ""}</td>
         <td data-label="Status">${guestStatus(g)}</td>
         <td data-label="Bringing">${esc(g.food) || '<span class="muted">—</span>'}</td>
-        <td data-label="Santa">${g.respondedAt || g.claimed ? (g.santa ? "In" : "Out") : '<span class="muted">—</span>'}</td>
+        <td data-label="Santa">${g.respondedAt || g.claimed ? (!g.santa ? "Out" : g.missedDate ? `Out <span class="muted small">(didn't rank the date)</span>` : "In") : '<span class="muted">—</span>'}</td>
         <td class="actions">
           <button class="btn ghost small" data-edit="${g.id}">Edit</button>
           ${g.inDraw ? "" : `<button class="btn ghost small" data-del-guest="${g.id}">Remove</button>`}
@@ -258,8 +261,12 @@
   }
 
   function santa() {
-    const ready = S.guests.filter((g) => g.respondedAt && g.santa);
+    const ready = S.guests.filter((g) => g.respondedAt && g.santa && !g.missedDate);
     const waiting = S.guests.filter((g) => !g.respondedAt);
+    const out = missed();
+    const final = S.dates.find((d) => d.id === S.finalDateId);
+    const outNote = out.length && final ? `<p class="note">Taken out for the date: <b>${esc(out.map((g) => g.name).join(", "))}</b>.
+      They joined Secret Santa but didn't rank ${esc(fmtDay(final))}, the party date. Anyone who adds it to their dates is put back in.</p>` : "";
     const people = S.draw ? S.guests.filter((g) => g.inDraw) : ready;
     const pins = people.length ? `<section class="card">
       <h3>PINs</h3>
@@ -280,8 +287,9 @@
     </section>` : "";
     return `<section class="card">
       <h2>Secret Santa</h2>
-      <p class="lead">Draw names once you have your headcount. Everyone who responded and joined Secret Santa is included. Guests see their match on the Secret Santa page with their PIN; matches aren't shown here.</p>
+      <p class="lead">Draw names once you have your headcount. Everyone who responded, joined Secret Santa and ranked the party date is included. Guests see their match on the Secret Santa page with their PIN; matches aren't shown here.</p>
       <p>${santaStatus()}</p>
+      ${S.draw ? "" : outNote}
       ${S.draw ? `<button class="btn danger" data-act="cancel-draw">Cancel draw</button>
         <p class="hint">Cancelling deletes all matches. When you draw again everyone gets a new match.</p>`
       : `<button class="btn green" data-act="draw" ${ready.length < S.minSantas ? "disabled" : ""}>Draw names (${plural(ready.length, "participant")})</button>
@@ -421,6 +429,11 @@
       try { sessionStorage.setItem("xmas.admin.tab", tab); } catch {}
       window.scrollTo({ top: 0 });
       return render();
+    }
+    if (d.final) {
+      const lose = missedFor(d.final);
+      const day = fmtDay(S.dates.find((x) => x.id === d.final));
+      if (lose.length && !confirm(`Set ${day}? ${lose.map((g) => g.name).join(", ")} didn't rank it and will be taken out of Secret Santa.`)) return;
     }
     if ("final" in d) return act(() => call("PUT", "final-date", { id: d.final || null }), d.final ? "Date set" : "Date unset");
     if (d.delDate) {
