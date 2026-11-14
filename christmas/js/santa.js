@@ -36,9 +36,11 @@
       <h2>Hi ${esc(firstWord(data.name))}</h2>
       ${opened
         ? `<div class="match"><div class="for">You're buying for</div><div class="who">${esc(m.name)}</div>
+            ${m.number ? `<p class="gift-num">Write <b>#${m.number}</b> on the gift instead of their name.</p>` : ""}
             ${m.hints ? `<blockquote>${esc(m.hints)}</blockquote>` : `<p class="muted small">No gift ideas listed.</p>`}
           </div>
           <ul class="summary" style="margin-top:1rem">
+            ${data.number ? `<li><span class="k">Your number</span><span class="v">#${data.number} <span class="muted small">· your gift will be marked with this</span></span></li>` : ""}
             ${p.budget ? `<li><span class="k">Budget</span><span class="v">${esc(p.budget)}</span></li>` : ""}
             ${data.finalDate ? `<li><span class="k">Party</span><span class="v">${esc(fmtDate(data.finalDate))}</span></li>` : ""}
           </ul>

@@ -36,6 +36,12 @@ function sameHousehold(a, b) {
 
 // One gift chain through everybody when possible (no A↔B swaps), otherwise any
 // assignment that keeps people away from themselves and their own household.
+// Gift numbers: each participant gets 1..n in random order, so gifts can be
+// labelled with the receiver's number instead of their name.
+function numberPlayers(ids) {
+  return Object.fromEntries(shuffle(ids.slice()).map((id, i) => [id, i + 1]));
+}
+
 function makePairs(players) {
   const n = players.length;
   for (let attempt = 0; attempt < 2000; attempt++) {
@@ -90,11 +96,16 @@ export class Party extends DurableObject {
   }
 
   // Saves from before ranked dates and PINs. Saved straight away so a PIN the
-  // host has already seen can't change under them.
+  // host has already seen can't change under them. Same for gift numbers on a
+  // draw made before they existed.
   migrate() {
     const s = this.s;
     let changed = false;
     if (s.party.rsvpBy === undefined) s.party.rsvpBy = null;
+    if (s.draw && !s.draw.numbers) {
+      s.draw.numbers = numberPlayers(Object.keys(s.draw.pairs));
+      changed = true;
+    }
     for (const g of s.guests) {
       if (!Array.isArray(g.rank)) Object.assign(g, { rank: [], noDates: false });
       if ("votes" in g) delete g.votes;
@@ -250,7 +261,8 @@ export class Party extends DurableObject {
     const receiver = s.guests.find((x) => x.id === s.draw.pairs[g.id]);
     return json({
       name: g.name,
-      match: receiver ? { name: receiver.name, hints: receiver.hints } : null,
+      number: s.draw.numbers[g.id] ?? null,
+      match: receiver ? { name: receiver.name, hints: receiver.hints, number: s.draw.numbers[receiver.id] } : null,
       party: { budget: s.party.budget, santaNote: s.party.santaNote },
       finalDate: s.dates.find((d) => d.id === s.finalDateId) || null,
     });
@@ -399,7 +411,7 @@ export class Party extends DurableObject {
         id: g.id, name: g.name, household: g.household, pin: g.pin,
         claimed: !!g.claimedAt, claimedAt: g.claimedAt, respondedAt: g.respondedAt,
         rank: g.rank, noDates: g.noDates, food: foodName(g), custom: g.custom, santa: g.santa, hints: g.hints,
-        inDraw: !!s.draw?.pairs[g.id], missedDate: this.missedDate(g),
+        inDraw: !!s.draw?.pairs[g.id], missedDate: this.missedDate(g), giftNumber: s.draw?.numbers[g.id] ?? null,
       })),
       draw: s.draw ? { at: s.draw.at, participants: Object.keys(s.draw.pairs).length } : null,
       minSantas: MIN_SANTAS,
@@ -520,7 +532,7 @@ export class Party extends DurableObject {
       if (players.length < MIN_SANTAS) {
         throw new HttpError(400, `Only ${players.length} people can be in Secret Santa (minimum ${MIN_SANTAS}).`);
       }
-      s.draw = { at: Date.now(), pairs: makePairs(players) };
+      s.draw = { at: Date.now(), pairs: makePairs(players), numbers: numberPlayers(players.map((g) => g.id)) };
       return done();
     }
 

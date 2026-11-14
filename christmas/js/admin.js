@@ -272,9 +272,10 @@
       <h3>PINs</h3>
       <p class="muted small">${S.draw ? "Text each participant the link and their PIN." : "Send these once you draw names."}</p>
       <div class="table-scroll"><table class="table stack">
-        <thead><tr><th>Participant</th><th>PIN</th><th></th></tr></thead>
+        <thead><tr><th>Participant</th>${S.draw ? "<th>Gift #</th>" : ""}<th>PIN</th><th></th></tr></thead>
         <tbody>${people.map((g) => `<tr>
           <td data-label="Participant"><b>${esc(g.name)}</b></td>
+          ${S.draw ? `<td data-label="Gift #">${g.giftNumber ? `#${g.giftNumber}` : "—"}</td>` : ""}
           <td data-label="PIN"><code class="pin">${esc(g.pin)}</code></td>
           <td class="actions">
             ${S.draw ? `<a class="btn green small" href="sms:?&body=${encodeURIComponent(pinMessage(g))}">Text</a>
@@ -283,7 +284,7 @@
           </td>
         </tr>`).join("")}</tbody>
       </table></div>
-      ${S.draw ? `<p class="hint">Text opens your messages app with the link and PIN filled in. Copy copies the same message.</p>` : ""}
+      ${S.draw ? `<p class="hint">Text opens your messages app with the link and PIN filled in. Copy copies the same message. Gift numbers are random; each Santa sees their person's number and labels the gift with it.</p>` : ""}
     </section>` : "";
     return `<section class="card">
       <h2>Secret Santa</h2>
